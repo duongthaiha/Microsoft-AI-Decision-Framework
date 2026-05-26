@@ -43,6 +43,15 @@ param searchEndpoint string
 @description('Azure OpenAI endpoint URL (injected into app env). Empty string skips injection.')
 param aoaiEndpoint string = ''
 
+@description('Enable demo mode (bypass JWT validation). Must be false in production.')
+param demoMode bool = false
+
+@description('Entra tenant ID for JWT validation.')
+param entraTenantId string = ''
+
+@description('Entra API audience (api://{appId}) for JWT validation.')
+param entraApiAudience string = ''
+
 // ---------------------------------------------------------------------------
 // Container Apps Environment (Consumption plan — pay-per-use)
 // ---------------------------------------------------------------------------
@@ -121,7 +130,15 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             }
             {
               name: 'ADVISOR_DEMO_MODE'
-              value: 'true'
+              value: demoMode ? 'true' : 'false'
+            }
+            {
+              name: 'ENTRA_TENANT_ID'
+              value: entraTenantId
+            }
+            {
+              name: 'ENTRA_API_AUDIENCE'
+              value: entraApiAudience
             }
             {
               name: 'NODE_ENV'
