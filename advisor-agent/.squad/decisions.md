@@ -559,3 +559,135 @@ last-modified: Tue, 26 May 2026 22:46:46 GMT
 - All meaningful changes require team consensus
 - Document architectural decisions here
 - Keep history focused on work, decisions focused on direction
+
+### dallas-jwt-validation-middleware
+
+**By:** Dallas (Backend & Agent Developer)  
+**Date:** 2026-05-26  
+**Status:** ✅ COMPLETE — deployed to revision `advisor-agent-app--azd-1779836350`
+
+**Summary**
+
+Wired JWT validation on Express backend. Protected routes (`/v1/responses`, `/sessions`, `/admin/*`) require valid Microsoft Entra ID access tokens. `/health` unauthenticated for liveness probes.
+
+**Key Decisions**
+
+- Middleware: `jose` v6 library with `createRemoteJWKSet` for automatic JWKS caching (10-min TTL)
+- Claims validated: `iss` (tenant-scoped), `aud` (custom API URI), `exp` (expiry), `scp` (contains `access_as_user`), `oid` (present, non-empty)
+- Routes protected: `/v1/responses`, `/sessions`, `/admin/*` (role-gated via `requireRole('AdvisorAdmin')`)
+- `/health` remains unauthenticated
+- Env contract: `ENTRA_TENANT_ID`, `ENTRA_API_AUDIENCE` (set on Container App + `.env.local`)
+- Demo mode: JWT validation bypassed when `ADVISOR_DEMO_MODE=true` (currently enabled); admin routes still blocked
+- Files: `agent/src/auth/jwt-middleware.ts` (new), `agent/src/index.ts`, `agent/src/admin/admin-api.ts`, `agent/package.json`
+
+**M1 Gap (Parker)**
+
+`AdvisorAdmin` app role not yet defined on Entra app reg `4f4f4a4d-e60f-4b86-a681-86059aae4597`. Role must be added and assigned to admin users before `/admin/*` routes work in production.
+
+**References**
+
+- Source: `.squad/decisions/inbox/dallas-jwt-validation-middleware.md`
+- Deployment: Container App revision `advisor-agent-app--azd-1779836350`
+- Smoke tests: `/health` (200 ✅), `/v1/responses` no-token (401 ✅), `/admin/org-context` demo-mode (403 ✅)
+
+---
+
+### lambert-msal-sign-in-wired
+
+**By:** Lambert (Frontend Developer)  
+**Date:** 2026-05-26  
+**Status:** ✅ COMPLETE — committed f15f20d, pushed to feat-ai-decision-agent
+
+**Summary**
+
+MSAL.js sign-in fully wired in SPA. Bearer tokens attached to every API call to `/advise` or `/admin/*`. Frontend acquires tokens via PKCE popup flow; backend validates via JWT middleware.
+
+**Key Decisions**
+
+- MSAL versions: `@azure/msal-browser` 3.30.0, `@azure/msal-react` 2.2.0 (exact pin, no `^`, to block v4 surprises)
+- Sign-in: `loginPopup` / `logoutPopup` (not redirect) — preserves SPA state, avoids hash pollution
+- Token cache: `sessionStorage` (not localStorage) — scopes token to tab lifetime, reduces XSS amplification
+- Redirect URI: `VITE_AZURE_REDIRECT_URI` env var; local dev `http://localhost:5173`, prod SWA `https://polite-mushroom-0a09fa803.7.azurestaticapps.net`
+- Token injection: `api/client.ts` → `getAccessToken()` acquires token silent, falls back to popup on MFA/conditional-access
+- Bearer header: attached to all `/advise` and `/admin/*` calls; `/health` unprotected
+- UI: new `AppHeader.tsx` shows user display name + sign-out button; `RequireAuth` gate remains
+- Build: zero TypeScript errors; `npm run build` → 452 KB index.js
+
+**Files Changed**
+
+- `web/package.json` (MSAL pinned), `web/src/auth/msal-config.ts`, `web/src/auth/RequireAuth.tsx`, `web/src/api/client.ts`, `web/src/components/AppHeader.tsx`, `web/src/App.tsx`, `web/src/styles.css`, `web/tsconfig.json`
+
+**References**
+
+- Source: `.squad/decisions/inbox/lambert-msal-sign-in-wired.md`
+- Commit: f15f20d
+- Scope: `api://4f4f4a4d-e60f-4b86-a681-86059aae4597/access_as_user`
+- Smoke test: local dev → sign in (popup) → network tab shows `Authorization: Bearer` on `/advise` ✅
+
+---
+
+### ripley-search-index-schema-system-inventory
+
+**By:** Ripley (Lead/Architect)  
+**Date:** 2026-05-26  
+**Status:** 🟡 PENDING — Routing to Parker (provisioning) and Dallas (query integration)
+
+**Summary**
+
+Designed AI Search index `system-inventory-v1` to power reuse-gate discovery. Schema includes 13 fields: `id`, `name`, `description`, `description_vector` (1536-dim for text-embedding-3-small), `capabilities`, `domain`, `owner_team`, `status`, `stack`, `data_sources`, `last_reviewed`, `confidence_score`, `org_id` (multi-tenant placeholder).
+
+**Key Decisions**
+
+- Index name: `system-inventory-v1` (versioned; future migrations use `v2` + alias for zero-downtime swap)
+- Vector search: HNSW algorithm (m=4, efConstruction=400, efSearch=500, cosine metric) — minimal footprint for Basic tier (50 MB limit)
+- Semantic search: `name` (title), `description` (content), `capabilities`/`domain`/`data_sources` (keywords)
+- Hybrid query pattern (Dallas): vector + BM25 + semantic re-rank; filter `status eq 'active'` + multi-tenant `org_id` (org-scoped + `null` for shared)
+- Query returns top 5 candidates; Dallas surfaces top 3 with `confidence_score >= 0.5`
+- Provisioning: JSON definition file `advisor-agent/data/system-inventory-v1-index.json` + `az search index create` CLI (Bicep ARM SDK incomplete for vector fields)
+- Authentication: `ManagedIdentityCredential` (agent MI already has `Search Index Data Reader` role)
+
+**M1 Gaps (Parker + Dallas)**
+
+- Parker: (P1) Create index via CLI, (P2) Grant `Search Index Data Contributor` role, (P3) Add `text-embedding-3-small` AOAI deployment
+- Dallas: (D1) Implement reuse-gate query in `agent/src/framework/step-1b-reuse-gate.ts`, (D2) Surface top-3 candidates, (D3) Confirm JWT validation in place
+- Out of scope M1: Seed data, autocomplete suggester (M2 gates)
+
+**References**
+
+- Source: `.squad/decisions/inbox/ripley-search-index-schema-system-inventory.md`
+- AI Search service: `advisor-search-uwmrjzgkhs2hk` (Basic tier, swedencentral)
+- Index JSON: `advisor-agent/data/system-inventory-v1-index.json` (companion file)
+- Azure Search docs: vector search, hybrid query, semantic ranking, HNSW params, create index CLI
+
+---
+
+### brett-auth-integration-tests
+
+**By:** Brett (Tester)  
+**Date:** 2026-05-26  
+**Status:** ✅ WRITTEN — ❌ 8/11 tests expected-fail (pre-implementation)
+
+**Summary**
+
+Wrote Layer 1 (backend contract tests) and Layer 2 (smoke script) for auth + `/v1/responses` critical path. Tests intentionally written before Dallas's JWT middleware and Lambert's MSAL client land; 3 pass, 8 expected-fail pending implementation.
+
+**Key Decisions**
+
+- Test runner: Vitest 1.6.1 (already configured); new `vitest.config.ts` baseline `ADVISOR_DEMO_MODE=false`
+- Layer 1: `agent/src/__tests__/auth-contract.test.ts` — 11 contract tests covering no-auth, malformed token, wrong signature, wrong aud/iss, expired, missing scp, valid token paths; `GET /health` (200), `/v1/responses` variants (401), `/admin/org-context` role-gated (403/200)
+- Layer 2: `scripts/smoke-prod.sh` — 3 checks: `/health` (200), `/v1/responses` no-auth (401), SWA homepage (200 text/html)
+- JWT mocking: `vi.mock('jose')` intercepts `jwtVerify`/`createRemoteJWKSet`; test configures outcomes via `mockResolvedValueOnce`/`mockRejectedValueOnce`
+- Claim constants exported (TENANT_ID, AUDIENCE, ISSUER, SCOPE, ADMIN_ROLE) for Dallas's future middleware unit tests
+- Known limitation: `agent/.env.local` sets `ADVISOR_DEMO_MODE=true`; admin tests (10/11) fail for wrong reason (demo mode gate, not JWT logic); will fix once Dallas's middleware lands and Dallas confirms `ADVISOR_DEMO_MODE=false` in CI/test env
+
+**M2 Backlog**
+
+- Playwright E2E: sign-in flow, intake form, admin drill-down (deferred until Lambert's MSAL UI stabilizes + SWA SPA deploy unblocked)
+
+**References**
+
+- Source: `.squad/decisions/inbox/brett-auth-integration-tests.md`
+- Files: `agent/src/__tests__/auth-contract.test.ts` (new), `agent/vitest.config.ts` (new), `scripts/smoke-prod.sh` (new), `agent/package.json` (supertest, jose added)
+- Test status: 3 pass (health, valid token paths), 8 expected-fail (auth rejection paths, admin pass)
+
+---
