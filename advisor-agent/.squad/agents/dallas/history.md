@@ -58,3 +58,39 @@ Entra app registration now live (parker-4 phase 1 complete). Frontend will reque
 - Scope: `api://4f4f4a4d-e60f-4b86-a681-86059aae4597/access_as_user`
 
 **Decision record:** `.squad/decisions.md` entry #260 (parker-entra-and-web-deploy, section §B &amp; §E)
+
+---
+
+## M1 Auth Wiring — JWT Middleware Deployed (2026-05-26T22:52:00Z)
+
+### jose patterns
+
+- Use `createRemoteJWKSet(new URL(jwksUri))` **once at module load** (not per request).  jose caches the key set with a 10-minute TTL.  Constructing it inside the middleware function re-fetches on every call.
+- `jwtVerify<T>(token, JWKS, { issuer, audience })` returns `{ payload, protectedHeader }`.  `exp` is validated automatically — no manual clock check needed.
+- Type the Entra-specific claims with a local interface (`EntraTokenClaims`) intersected with `JWTPayload`.  jose's `JWTPayload` only covers RFC 7519 standard claims; `oid`, `scp`, `roles`, `preferred_username` must be typed separately.
+
+### JWKS caching
+
+- `createRemoteJWKSet` uses an in-memory cache (default 10 min).  No Redis or external cache needed for typical Container App workloads.
+- The JWKS URL for Entra v2 is: `https://login.microsoftonline.com/{tenantId}/discovery/v2.0/keys`.
+
+### v2 audience format gotcha
+
+- **v2 access tokens with custom scopes carry `aud = "api://{appId}"`** — the full URI form, NOT the bare GUID.
+- If `aud` is validated against the bare GUID (`4f4f4a4d-…`), all token validations will fail with "audience mismatch" because Entra sets `aud` to the `api://` URI when an `api://` scope is requested.
+- Always set `ENTRA_API_AUDIENCE=api://{appId}` (not the GUID alone).
+
+### Express middleware ordering
+
+- Mount `app.use(['/v1', '/sessions', '/admin'], jwtMiddleware)` **before** `app.use('/', createResponsesAdapter(...))` so the JWT check runs for protected paths without touching `/health`.
+- Express prefix matching on `app.use('/admin', middleware)` covers all sub-paths, so a single `use` call protects the entire admin sub-router.
+
+### Demo mode interaction
+
+- JWT middleware should bypass token validation in demo mode and set a synthetic demo identity.  This keeps demo environments working without Entra tokens while admin routes remain blocked (demo identity has no roles).
+- `requireRole('AdvisorAdmin')` should explicitly check `ADVISOR_DEMO_MODE` and return 403 regardless of token contents — the demo identity must never acquire admin access.
+
+### AdvisorAdmin role gap (for Parker)
+
+- `requireRole('AdvisorAdmin')` is wired in `admin-api.ts` but the app role is **not yet defined** on the app registration.  Until Parker adds it to the manifest and assigns it to users, all admin routes will return 403 for real Entra users.  See decision file `dallas-jwt-validation-middleware.md §F`.
+

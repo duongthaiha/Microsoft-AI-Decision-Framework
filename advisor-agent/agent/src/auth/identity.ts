@@ -76,12 +76,9 @@ export function resolveCallerId(req: ExpressRequest): CallerIdentity {
     return { ownerId: DEMO_OWNER_ID, isDemo: true };
   }
 
-  // M1: the JWT validation middleware will attach the decoded token to req.
-  // Convention: validated claims are stored on (req as any).auth?.payload or
-  // req.user?.oid depending on the chosen middleware.  Adjust the property path
-  // when wiring the Entra MSAL / passport strategy in M1.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const oid: string | undefined = (req as any).auth?.payload?.oid ?? (req as any).user?.oid;
+  // JWT validation middleware (jwt-middleware.ts) runs upstream and attaches req.user.
+  // Reads oid from the already-validated token claims (FR-014, FR-019).
+  const oid: string | undefined = req.user?.oid;
 
   if (!oid) {
     throw new Error(

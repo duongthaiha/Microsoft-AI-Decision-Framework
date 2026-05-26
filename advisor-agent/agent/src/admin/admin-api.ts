@@ -23,30 +23,8 @@
  * FR-030 — admin read scope enforced at data layer.
  */
 
-import { Router, type Request, type Response, type NextFunction } from "express";
-
-// ---------------------------------------------------------------------------
-// Middleware stub
-// ---------------------------------------------------------------------------
-
-/**
- * Validates that the caller holds the `AdvisorAdmin` Entra app role.
- *
- * M1 will implement this as a real JWT role-claim check.  Until then, the stub
- * blocks all admin routes in demo mode and returns 403 so the admin surfaces are
- * not accidentally accessible (§11 — admin scope, demo mode cannot grant admin).
- */
-function requireAdminRole(req: Request, res: Response, next: NextFunction): void {
-  // M1: decode the validated JWT from req, check roles claim contains 'AdvisorAdmin'.
-  // If not present: audit-log the attempt (adminId if resolvable, endpoint, timestamp)
-  // then return 403 with no content leakage (FR-021, §11 admin scope).
-  if (process.env.ADVISOR_DEMO_MODE === "true") {
-    res.status(403).json({ error: "Admin access is not available in demo mode." });
-    return;
-  }
-  // M1: replace this pass-through with real role validation.
-  next();
-}
+import { Router, type Request, type Response } from "express";
+import { requireRole } from "../auth/jwt-middleware.js";
 
 // ---------------------------------------------------------------------------
 // Router factory
@@ -55,8 +33,9 @@ function requireAdminRole(req: Request, res: Response, next: NextFunction): void
 export function createAdminRouter(): Router {
   const router = Router();
 
-  // Apply the admin role gate to every route in this sub-router.
-  router.use(requireAdminRole);
+  // Apply the AdvisorAdmin role gate to every route in this sub-router.
+  // jwtMiddleware runs upstream (index.ts) so req.user is already populated.
+  router.use(requireRole("AdvisorAdmin"));
 
   // -------------------------------------------------------------------------
   // Organisation Context

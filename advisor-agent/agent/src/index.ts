@@ -13,6 +13,8 @@
  *   SEARCH_ENDPOINT       — Azure AI Search endpoint URL
  *   ADVISOR_LOCAL_DEV     — 'true' enables DefaultAzureCredential fallback
  *   ADVISOR_DEMO_MODE     — 'true' disables Entra sign-in for demo environments
+ *   ENTRA_TENANT_ID       — Entra tenant ID (default: cdfe81b5-821e-4f07-9ea7-516efc8497e4)
+ *   ENTRA_API_AUDIENCE    — Full api:// audience URI (default: api://4f4f4a4d-e60f-4b86-a681-86059aae4597)
  *
  * Microsoft Learn — Foundry Hosted Agent runtime:
  * https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents
@@ -23,6 +25,7 @@ import { createResponsesAdapter } from "./adapter/responses.js";
 import { createAdminRouter } from "./admin/admin-api.js";
 import { CosmosSessionStore } from "./data/session-store.js";
 import { CosmosRequestStore } from "./data/request-store.js";
+import { jwtMiddleware } from "./auth/jwt-middleware.js";
 
 const app = express();
 app.use(express.json());
@@ -32,6 +35,12 @@ app.use(express.json());
 // ---------------------------------------------------------------------------
 const sessionStore = new CosmosSessionStore();
 const requestStore = new CosmosRequestStore();
+
+// ---------------------------------------------------------------------------
+// JWT protection — applied before protected routers.
+// /health remains unauthenticated (liveness/readiness probe).
+// ---------------------------------------------------------------------------
+app.use(["/v1", "/sessions", "/admin"], jwtMiddleware);
 
 // ---------------------------------------------------------------------------
 // Routers

@@ -16,7 +16,8 @@
     "@azure/cosmos": "^4.1.1",
     "@azure/identity": "^4.4.1",
     "@azure/search-documents": "^12.1.0",
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "jose": "^6.2.3"
   },
   "peerDependencies": {
     "@github/copilot-sdk": "*"
@@ -29,7 +30,9 @@
   "devDependencies": {
     "@types/express": "^4.17.21",
     "@types/node": "^20.14.0",
+    "@types/supertest": "^7.2.0",
     "eslint": "^9.5.0",
+    "supertest": "^7.2.2",
     "typescript": "^5.4.5",
     "vitest": "^1.6.0"
   },
