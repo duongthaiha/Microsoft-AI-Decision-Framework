@@ -259,3 +259,38 @@ Stub location: `agent/src/auth/identity.ts` (marked "M1: the JWT validation midd
 | Plan app role assignment workflow | Ha / Parker | Portal or AZD postprovision hook |
 
 **Decision record:** `.squad/decisions.md` entry #260
+
+---
+
+## SWA GitHub Actions Deploy — 2026-05-26 (parker-5)
+
+### GitHub Actions as deploy fallback for ARM-incompatible toolchains
+
+When local toolchain cannot run (e.g. SWA CLI x86-64 binary on ARM aarch64 codespace), GitHub Actions on `ubuntu-latest` is the correct unblocking pattern. Documented as a reusable skill in `.squad/skills/github-actions-as-deploy-fallback/SKILL.md`.
+
+**Pattern applied:** `gh secret set` + `gh variable set` → commit workflow → push → first run triggered automatically.
+
+### gh secret / variable conventions used
+
+- **Sensitive deploy credentials** (SWA token, storage keys, etc.) → `gh secret set NAME --body "$VALUE" -R owner/repo`
+- **Public build-time config** (Vite envs, client IDs, URLs) → `gh variable set NAME --body "VALUE" -R owner/repo`
+- Variables are accessible in workflows as `${{ vars.NAME }}`; secrets as `${{ secrets.NAME }}`
+- Inline fallback defaults in workflow `env:` block (`${{ vars.NAME || 'default' }}`) prevent build breaks if variables are deleted
+
+### SWA action quirks
+
+- `app_location` must be **repo-root-relative** (e.g. `advisor-agent/web`), not workspace-relative
+- `output_location` is relative to `app_location` (so `dist` → `advisor-agent/web/dist`)
+- `app_build_command` runs inside `app_location` — `npm ci && npm run build` works for Vite monorepo setups
+- Vite env vars must be in the `env:` block on the **deploy step** (not job-level) so the SWA action's build subprocess picks them up
+- `close_pull_request_job` must use `action: 'close'` and the same `app_location`; no `output_location` needed
+
+### ARM workaround documented
+
+`ubuntu-latest` GitHub-hosted runner is x86-64. The SWA CLI `StaticSitesClient` binary inside `Azure/static-web-apps-deploy@v1` is x86-64 only — this is why `azd deploy web` fails on ARM aarch64 codespaces. GitHub Actions is the canonical unblock path.
+
+### First confirmed deploy
+
+- Run `26479487737` — ✅ success, 1m8s
+- Site: `https://polite-mushroom-0a09fa803.7.azurestaticapps.net` → HTTP 200, `text/html`
+- Decision record: `.squad/decisions/inbox/parker-swa-github-actions-deploy.md`
