@@ -59,3 +59,34 @@ M0 delivered cohesively across 7 specialists: monorepo structure, backend TS sca
 3. **Coordinate M2 auth rollout** — Dallas (JWT validation) + Parker (AdvisorAdmin app role) + Ha (SWA deploy) on critical path for production sign-in.
 
 **Decision records:** `.squad/decisions.md` entries #259 (parker-region-redeploy) and #260 (parker-entra-and-web-deploy)
+
+---
+
+## M1 Search Schema Design — 2026-05-26T22:52:00Z
+
+### Search index design choices
+
+- **Index name versioned from day 1** (`system-inventory-v1`). Future migrations use `system-inventory-v2` + alias swap — never in-place schema mutation on a live index.
+- **`org_id` included despite MVP being single-tenant.** Product-spec §3 explicitly defers multi-tenancy. Including a nullable `org_id` now means the field is there when needed; a future v2 migration would only be needed if *new* fields are required, not for tenancy.
+- **BM25 + vector + semantic re-rank (hybrid).** For a small catalogue index, pure vector search over-fits to embedding similarity. BM25 catches exact tag matches (e.g. `invoice-ocr`). Semantic re-rank ensures relevance ordering is human-concept-aligned, not just cosine-score-aligned. Always combine all three for reuse-gate queries.
+- **`confidence_score` as a sortable break-tie, not a filter.** Do not use it as a hard vector filter — it would mis-rank fresh low-confidence systems over stale high-confidence ones. Apply the `>= 0.5` threshold post-retrieval in agent code after semantic ranking.
+- **`capabilities` facetable.** Admin browse UI will want facets; adding facetable at schema creation is free. Removing it later requires index rebuild.
+- **`data_sources` searchable.** Users describe problems in terms of their data ("we have Snowflake data, how do we..."), so `data_sources` appearing in BM25 index catches these descriptions.
+- **English Microsoft analyzer on `name` and `description`.** `en.microsoft` handles stemming/lemmatization better than `standard.lucene` for technical English prose. Use consistent analyzer at ingest and query time.
+
+### Vector profile patterns
+
+- **HNSW `m=4` for Basic tier.** Basic tier has a 50 MB vector index limit per partition. Lower `m` = fewer edges per node = smaller graph = lower memory. Raise to `m=8` if recall drops at scale.
+- **`efConstruction=400`, `efSearch=500`** — Microsoft's recommended defaults for balanced recall vs. latency on small indexes (< 10K docs). Re-tune once the index has real data via `GET /stats`.
+- **Integrated vectorization NOT yet enabled.** `aoai.bicep` only deploys `gpt-4.1-mini`. The `vectorizers` block is intentionally omitted from `system-inventory-v1-index.json` until Parker adds `text-embedding-3-small`. Until then, Dallas must call the Embeddings API explicitly at ingest time and pass the vector in the document body.
+- **`cosine` metric.** Standard for OpenAI text-embedding models — vectors are not magnitude-normalized by default, so cosine outperforms dot-product for these embeddings.
+
+### RBAC gap discovered
+
+Agent identity has `Search Index Data Reader` (confirmed in `identity.bicep:95`). Admin upsert path (system inventory CRUD via admin backend) requires `Search Index Data Contributor` (`8ebe5a00-799e-43f5-93ac-243d3dce84a0`). Parker must add this assignment for the admin backend identity (P2 in the decision follow-up list).
+
+### Deliverables
+
+- Decision file: `.squad/decisions/inbox/ripley-search-index-schema-system-inventory.md`
+- Index JSON: `advisor-agent/data/system-inventory-v1-index.json` (Parker provisioning artifact)
+- M1 routing: Parker (P1–P3), Dallas (D1–D3)

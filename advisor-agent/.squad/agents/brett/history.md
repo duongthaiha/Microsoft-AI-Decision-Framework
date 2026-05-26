@@ -44,4 +44,56 @@ Three-tier test infrastructure under `tests/`:
 
 ## Team Update — 2026-05-26 M0 scaffold complete
 
+## M1 — Auth + /advise Contract Tests (2026-05-26)
+
+### What I built
+
+Two-layer test infrastructure for the auth + `/v1/responses` (advise) critical path, written proactively before Dallas's JWT middleware and Lambert's MSAL client land:
+
+**Layer 1 — `agent/src/__tests__/auth-contract.test.ts`:**
+11 Vitest contract tests covering:
+- `GET /health` — no auth required (passes now)
+- `POST /v1/responses` — 8 JWT validation failure modes (no token, malformed, wrong key, wrong aud, wrong iss, expired, missing scp) + 1 happy-path (valid token)
+- `GET /admin/*` — AdvisorAdmin role gate (missing role → 403, role present → not 403/401)
+
+**Layer 2 — `scripts/smoke-prod.sh`:**
+3-check bash smoke script targeting the deployed Container App + SWA.  Prints colored PASS/FAIL summary.  Exits 1 if any check fails.
+
+### Architecture decisions
+
+**Why `vi.mock('jose')` not real JWTs + JWKS server:**
+Dallas's middleware will call `jose.jwtVerify`.  Mocking `jose` at the module level gives per-test control over every jose error code (`ERR_JWS_SIGNATURE_VERIFICATION_FAILED`, `ERR_JWT_EXPIRED`, `ERR_JWT_CLAIM_VALIDATION_FAILED`) without a real key pair or JWKS server.  This is more deterministic and offline-friendly.  If Dallas uses a different jose API surface, only the mock factory needs updating.
+
+**Why `process.env` direct assignment not `vi.stubEnv` for admin test env:**
+Vitest 1.6 does not reliably override env vars already set in `.env.local` via `vi.stubEnv` (the dotenv-loaded value wins in the test worker context).  Direct `process.env.ADVISOR_DEMO_MODE = 'false'` with save/restore in `beforeEach`/`afterEach` is more explicit.  Also added `agent/vitest.config.ts` with `env: { ADVISOR_DEMO_MODE: 'false' }` as a belt-and-suspenders baseline for future tests.
+
+**Why `jose` is a production dep not devDep:**
+Dallas's JWT middleware will import `jose` at runtime.  Adding it to `dependencies` makes the intent clear and ensures it's in the production container image.
+
+**Route naming note:**
+Squad brief refers to "POST /advise" informally.  The actual Responses protocol endpoint is `POST /v1/responses`.  Tests target `/v1/responses`.  Decision file documents the mapping.
+
+### Expected-fail state at time of write
+
+| Test | Status | Reason |
+|------|--------|--------|
+| 1 (health) | ✅ PASS | Route is live |
+| 2–8 (JWT validation) | ❌ FAIL | No JWT middleware → route stub returns 501 |
+| 9 (valid token) | ✅ PASS | 501 satisfies "not 401, not 403" |
+| 10 (no-role admin) | ✅ PASS | `.env.local` DEMO_MODE=true → 403 (correct result, wrong reason) |
+| 11 (admin-role) | ❌ FAIL | DEMO_MODE=true blocks even admin-role tokens |
+
+**Total: 3 pass, 8 expected-fail.**  All failures are intentional — they define the contract Dallas must fulfill.
+
+### Smoke script known state
+
+Check 1 (health) passes against deployed CA.  Check 2 (unauthenticated advise → 401) fails until Dallas's middleware lands (currently returns 501).  Check 3 (SWA root → 200) status depends on SWA deploy (parker-region-redeploy).
+
+### How M2 tests will be added
+
+1. **Playwright E2E (`tests/e2e/auth-flow.spec.ts`)**: Once Lambert's MSAL UI settles and the SWA is deployed, unskip the sign-in flow spec.  Use a headless browser with cookie persistence for the MSAL popup.
+2. **Integration tier (`tests/integration/`)**: Wire after Parker's Cosmos/Search provisioning and Dallas's M1 store implementations.
+3. **Smoke script**: Update Check 2 to remove the "EXPECTED FAIL" comment once Dallas's middleware is live.
+
+
 M0 delivered cohesively across 7 specialists: monorepo structure, backend TS scaffold, React web app, Bicep infra, tests with AC mapping, UX direction, and Constitution-voice documentation. All code installs, type-checks, and passes tests.
