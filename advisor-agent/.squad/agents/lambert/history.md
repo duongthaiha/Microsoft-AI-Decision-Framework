@@ -83,3 +83,73 @@ Parker deployed `.github/workflows/deploy-web.yml` at 868bd67. SPA deploys are n
 
 - The SWA GitHub Actions deploy workflow (`deploy-web.yml`) triggers on any push to `feat-ai-decision-agent` touching `advisor-agent/web/**`. No manual deploy step needed.
 - Build-time env vars (`VITE_*`) are passed from GitHub Actions variables, not from `.env.local`. Always verify GitHub variable values match `.env.local` for local parity.
+
+---
+
+## M1 — Chat Render, Session List, Admin Wiring (2026-05-26)
+
+### Chat UX patterns
+
+**Turns-array model** over a single `ChatState` discriminated union: maintains full history across multiple submissions, makes re-submit ("Edit intake → re-analyse") natural without resetting the view. State is `turns: { role, text, timestamp }[]` + a separate `submitting: boolean` + `errorMsg: string | null`. Error turns are pushed as assistant turns with italic text so the conversation history is never wiped on failure.
+
+**User turn format:** Build a concise markdown summary from the intake fields on submit. Bold project name on the first line, then `**Field:** value` pairs for non-empty fields. This gives the user immediate feedback that their submission was received and creates a readable record.
+
+**Collapse/expand pattern:** After the first successful submit, collapse the intake panel and show an "Edit intake" toggle. `intakeCollapsed` state drives `session-intake--collapsed` class; the form is hidden via CSS (`display: none`) not unmounted, so form values persist. The toggle aria-expanded attribute signals state to screen readers.
+
+**Auto-scroll:** `useRef<HTMLDivElement>` + `chatEndRef.current?.scrollIntoView({ behavior: 'smooth' })` in a `useEffect([turns, submitting])`. This fires whenever turns or the submitting flag changes, keeping the latest content in view.
+
+**Thinking state:** Animated three-dot bounce with CSS `@keyframes thinking-bounce` on a `<div>` that renders during `submitting`. No library needed — three `<span>` children with staggered `animation-delay` values.
+
+### Hosted Agent Responses protocol — client handling
+
+The response shape is:
+```json
+{
+  "id": "resp_...",
+  "object": "response",
+  "created_at": <unix>,
+  "status": "completed",
+  "output": [
+    { "type": "message", "role": "assistant", "content": [{ "type": "output_text", "text": "..." }] }
+  ],
+  "session": { "id": "...", "title": "..." }
+}
+```
+
+Client extraction pattern (defensive, no throws):
+```ts
+const text = response?.output?.[0]?.content?.[0]?.text;
+if (typeof text === 'string' && text.length > 0) return text;
+return fallbackString;
+```
+
+Use optional chaining throughout. Type the response with `AdvisorResponse` interface that mirrors the expected shape — but wrap all extraction in a try/catch so a shape divergence produces a graceful fallback message, not a white screen.
+
+Add `AdvisorResponse` and its sub-interfaces (`ResponseOutputItem`, `ResponseOutputContent`) to `web/src/types/index.ts` so the POST call is fully typed end-to-end.
+
+### MSAL admin role gating
+
+`RequireAdmin` uses `idTokenClaims.roles` (MSAL populates from the Entra app manifest `appRoles` claim). The check is `roles.includes('AdvisorAdmin')`. This is **not** a security check (happens client-side) — it is a UX gate only. Backend must enforce the role via JWT claim validation. `isDemoMode` bypasses the gate entirely for local development.
+
+Admin layout (`AdminLayout.tsx`) wraps `RequireAdmin` around the `<Outlet>`, so all three admin pages inherit the gate automatically — no per-page boilerplate needed.
+
+### react-markdown choice
+
+`react-markdown` v9 (ESM, remark-based) is the correct choice for M1:
+- Renders GitHub-flavoured markdown (headings, lists, bold, code blocks, blockquotes)
+- Pure ESM — tree-shaken well by Vite
+- Streaming-compatible for M2 (accept incremental `text` prop updates)
+- No runtime config needed for basic use
+- Version 9+ dropped CJS; pin to `^9.x` and set `"moduleResolution": "bundler"` in tsconfig if needed
+
+### Type reconciliation discipline
+
+Always re-read `agent/src/data/models.ts` before finalising SPA types. Key divergences found in M1:
+- `Session.sessionId` (separate from `id`) — Cosmos DB pattern of mirroring the doc id
+- `ReuseDecision` became `ReuseGateDecision` wrapping `ReuseDecisionKind`
+- `ReadinessBrief.recommendedPlatform` became a `RecommendedPlatform` object (not a string)
+- `Project.lessonsLearned` changed from `string[]` to `string?`
+- `OrgContext.version` is `string` not `number`
+- `SimilarProjectMatch.similarity` → `.score`; added `.technologies[]`
+
+The SPA type file mirrors the agent types 1:1 — no SPA-only abstractions. When agent types change, update SPA types in the same commit if possible, or flag the delta explicitly in the decision file.

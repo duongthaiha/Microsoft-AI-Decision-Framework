@@ -1,22 +1,32 @@
 import React from 'react';
 import { useParams } from 'react-router-dom';
-import type { ReadinessBrief, AlignmentNote } from '../types';
+import type { ReadinessBrief } from '../types';
 
 // TODO M1: replace static mock with apiGet(`/api/briefs/${id}`)
-const MOCK_BRIEF: ReadinessBrief & { alignmentNotes: AlignmentNote[] } = {
-  recommendedPlatform: 'Microsoft Copilot Studio',
-  rationale:
-    'The project requires a low-code conversational agent with Teams integration and no autonomous tool-calling. Copilot Studio is the simplest platform that will work.',
-  estimatedComplexity: 'medium',
-  similarProjects: [
+const MOCK_BRIEF: ReadinessBrief = {
+  recommendedPlatform: {
+    platformKey: 'copilot-studio',
+    displayName: 'Microsoft Copilot Studio',
+    rationale:
+      'The project requires a low-code conversational agent with Teams integration and no autonomous tool-calling. Copilot Studio is the simplest platform that will work.',
+    estimatedComplexity: 'medium',
+    tradeOffs: 'Limited pro-code extensibility; connector governance overhead.',
+    runnerUpAlternatives: ['M365 Agents SDK (pro-code option)', 'Azure Bot Service'],
+  },
+  bxtScore: {
+    viability: 80,
+    desirability: 85,
+    feasibility: 70,
+    summary: 'Strong fit with existing M365 licensing; feasibility gated on connector approval.',
+  },
+  alignmentNotes: [
     {
-      projectId: 'proj-001',
-      name: 'Customer FAQ Bot',
-      similarity: 0.87,
-      summary: 'Handles tier-1 support questions in Teams.',
+      instructionId: 'ci-001',
+      outcome: 'followed',
+      reason: 'Recommendation uses an available, licensed platform.',
+      frameworkAnchor: 'Q2 build style',
     },
   ],
-  alternatives: ['M365 Agents SDK (pro-code option)', 'Azure Bot Service'],
   risks: [
     'Custom connector governance — ensure data classification is reviewed.',
     'Token limits may constrain grounding doc length.',
@@ -26,15 +36,8 @@ const MOCK_BRIEF: ReadinessBrief & { alignmentNotes: AlignmentNote[] } = {
     'Run a Copilot Studio proof of concept with a sample topic.',
     'Confirm M365 Copilot licence coverage with IT.',
   ],
-  orgContextVersion: 'v2 (2026-05-20)',
-  alignmentNotes: [
-    {
-      instructionId: 'ci-001',
-      outcome: 'followed',
-      reason: 'Recommendation uses an available, licensed platform.',
-      frameworkAnchor: 'Q2 build style',
-    },
-  ],
+  orgContextVersion: 'v2',
+  generatedAt: '2026-05-26T17:00:00Z',
 };
 
 export function BriefPage() {
@@ -53,38 +56,34 @@ export function BriefPage() {
 
       <section aria-labelledby="recommendation-heading">
         <h2 id="recommendation-heading">Recommended platform</h2>
-        <p className="recommended-platform">{brief.recommendedPlatform}</p>
-        <p>{brief.rationale}</p>
+        <p className="recommended-platform">{brief.recommendedPlatform.displayName}</p>
+        <p>{brief.recommendedPlatform.rationale}</p>
+        <p>
+          <strong>Estimated complexity:</strong> {brief.recommendedPlatform.estimatedComplexity}
+        </p>
+        <p>
+          <strong>Trade-offs:</strong> {brief.recommendedPlatform.tradeOffs}
+        </p>
       </section>
 
-      <section aria-labelledby="similar-heading">
-        <h2 id="similar-heading">Similar projects</h2>
-        {brief.similarProjects.length === 0 ? (
-          <p>No close matches found in the project shelf.</p>
-        ) : (
+      {brief.recommendedPlatform.runnerUpAlternatives.length > 0 && (
+        <section aria-labelledby="alternatives-heading">
+          <h2 id="alternatives-heading">Alternatives considered</h2>
           <ul>
-            {brief.similarProjects.map((p) => (
-              <li key={p.projectId}>
-                <strong>{p.name}</strong> — {p.summary} (similarity:{' '}
-                {Math.round(p.similarity * 100)}%)
-              </li>
+            {brief.recommendedPlatform.runnerUpAlternatives.map((alt) => (
+              <li key={alt}>{alt}</li>
             ))}
           </ul>
-        )}
-      </section>
+        </section>
+      )}
 
-      <section aria-labelledby="complexity-heading">
-        <h2 id="complexity-heading">Estimated complexity</h2>
-        <p>{brief.estimatedComplexity}</p>
-      </section>
-
-      <section aria-labelledby="alternatives-heading">
-        <h2 id="alternatives-heading">Alternatives considered</h2>
-        <ul>
-          {brief.alternatives.map((alt) => (
-            <li key={alt}>{alt}</li>
-          ))}
-        </ul>
+      <section aria-labelledby="bxt-heading">
+        <h2 id="bxt-heading">BXT assessment</h2>
+        <p>
+          Viability {brief.bxtScore.viability}% · Desirability {brief.bxtScore.desirability}% ·
+          Feasibility {brief.bxtScore.feasibility}%
+        </p>
+        <p>{brief.bxtScore.summary}</p>
       </section>
 
       <section aria-labelledby="risks-heading">
@@ -133,3 +132,4 @@ export function BriefPage() {
     </main>
   );
 }
+
