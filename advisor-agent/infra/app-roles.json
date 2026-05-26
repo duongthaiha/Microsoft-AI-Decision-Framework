@@ -1,0 +1,10 @@
+[
+  {
+    "id": "d64375c5-5a38-41a3-9f36-f68f8a4c2674",
+    "value": "AdvisorAdmin",
+    "displayName": "Advisor Admin",
+    "description": "Can manage org context, projects, and inspect all advisor requests.",
+    "allowedMemberTypes": ["User"],
+    "isEnabled": true
+  }
+]

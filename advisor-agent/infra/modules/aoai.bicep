@@ -1,12 +1,16 @@
 /*
-  aoai.bicep — Azure OpenAI account + gpt-4o-mini deployment.
+  aoai.bicep — Azure OpenAI account + gpt-4.1-mini + text-embedding-3-small deployments.
 
   Uses Standard (S0) pricing tier with pay-as-you-go capacity.
   Local auth is DISABLED — callers must use managed identity with the
   "Cognitive Services OpenAI User" role (see identity.bicep).
 
-  Model: gpt-4o-mini (cheapest capable model, ~$0.15/1M input tokens).
-  Capacity: 10K TPM — safe for dev/demo workloads.
+  Models:
+    - gpt-4.1-mini (Standard SKU): chat/completion, ~$0.15/1M input tokens.
+    - text-embedding-3-small (GlobalStandard SKU): 1536-dim embeddings for AI Search
+      integrated vectorization. NOTE: Standard SKU is not available in swedencentral
+      for this model; GlobalStandard is required.
+  Capacity: 10K TPM each — safe for dev/demo workloads.
 
   Docs:
     https://learn.microsoft.com/azure/ai-services/openai/overview
@@ -57,6 +61,10 @@ resource aoaiAccount 'Microsoft.CognitiveServices/accounts@2024-04-01-preview' =
 // Model Deployment
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Model Deployment — Chat/Completion
+// ---------------------------------------------------------------------------
+
 resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-04-01-preview' = {
   parent: aoaiAccount
   name: modelName
@@ -74,6 +82,27 @@ resource modelDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-
 }
 
 // ---------------------------------------------------------------------------
+// Embedding Deployment — text-embedding-3-small (GlobalStandard required in swedencentral)
+// ---------------------------------------------------------------------------
+
+resource embeddingDeployment 'Microsoft.CognitiveServices/accounts/deployments@2024-04-01-preview' = {
+  parent: aoaiAccount
+  name: 'text-embedding-3-small'
+  dependsOn: [modelDeployment]
+  sku: {
+    name: 'GlobalStandard'
+    capacity: capacityK
+  }
+  properties: {
+    model: {
+      format: 'OpenAI'
+      name: 'text-embedding-3-small'
+      version: '1'
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------
 
@@ -81,3 +110,4 @@ output accountName string = aoaiAccount.name
 output accountId string = aoaiAccount.id
 output endpoint string = aoaiAccount.properties.endpoint
 output modelDeploymentName string = modelDeployment.name
+output embeddingDeploymentName string = embeddingDeployment.name

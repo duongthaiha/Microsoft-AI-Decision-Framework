@@ -84,3 +84,11 @@ M0 delivered cohesively across 7 specialists: monorepo structure, backend TS sca
 - SWA GitHub Actions workflow deployed (commit 868bd67, run 26479487737)
 
 **Decision records:** `.squad/decisions.md` entries parker-bicep-modules, parker-m0-verification-complete, parker-azd-deploy-partial-green, parker-region-redeploy, parker-entra-and-web-deploy, parker-swa-github-actions-deploy (merged 2026-05-26T22:54:00Z)
+
+**2026-05-26 M1 Infra Run (parker-m1-infra-roles-search-embedding):**
+- **AdvisorAdmin app role** added to `advisor-agent-web` (appId `4f4f4a4d-...`); SP created (id `2f3a486a-...`); role assigned to Ha Duong (oid `3cff1542-...`) via Graph `appRoleAssignments`. Role id: `d64375c5-5a38-41a3-9f36-f68f8a4c2674`. Manifest at `infra/app-roles.json`.
+- **`system-inventory-v1` AI Search index** provisioned (HTTP 201) against `advisor-search-uwmrjzgkhs2hk` from `advisor-agent/data/system-inventory-v1-index.json` (Ripley's design). Index re-PUT (HTTP 204) with `vectorizers` block after AOAI deployment landed. `Search Index Data Contributor` granted to `advisor-agent-identity` (principalId `c8c13fe3-...`).
+- **`text-embedding-3-small`** deployed to `advisor-aoai-uwmrjzgkhs2hk` (GlobalStandard SKU, 10K TPM, `provisioningState: Succeeded`). Note: Standard SKU not available for this model in swedencentral — GlobalStandard required. Bicep module `infra/modules/aoai.bicep` updated with `embeddingDeployment` resource + output.
+- **Decision files written:** `parker-m1-infra-roles-search-embedding.md`, `parker-aoai-embedding-deploy.md` (inbox).
+- No permissions blockers encountered.
+
