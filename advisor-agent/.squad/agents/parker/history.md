@@ -61,3 +61,43 @@ Public networking selected per product-spec §10. `publicNetworking` parameter d
 ## Team Update — 2026-05-26 M0 scaffold complete
 
 M0 delivered cohesively across 7 specialists: monorepo structure, backend TS scaffold, React web app, Bicep infra, tests with AC mapping, UX direction, and Constitution-voice documentation. All code installs, type-checks, and passes tests.
+
+---
+
+## M0 Local Boot Smoke Test — 2026-05-26
+
+### Dev loop commands (verified on commit 9250e2c)
+
+**Install (once per codespace):**
+```bash
+cd advisor-agent && npm install
+```
+
+**Agent backend (port 8080) — build required, no watch mode in M0:**
+```bash
+cd advisor-agent/agent && npm run build && ADVISOR_DEMO_MODE=true ADVISOR_LOCAL_DEV=true node dist/index.js
+```
+
+**Web dev server (port 5173):**
+```bash
+cd advisor-agent/web && npm run dev
+```
+
+**Full one-liner:**
+```bash
+cd /workspaces/Microsoft-AI-Decision-Framework/advisor-agent && \
+  (cd agent && npm run build && ADVISOR_DEMO_MODE=true ADVISOR_LOCAL_DEV=true node dist/index.js &) && \
+  (cd web && npm run dev)
+```
+
+### Gotchas discovered
+
+1. **No `dev` script in `agent/`** — must `npm run build` then `node dist/index.js` every time. Dallas to add `tsx watch` dev script in M1.
+
+2. **`web/tsc --noEmit` fails with TS6059** — `tsconfig.base.json` at monorepo root has `"rootDir": "src"` which resolves to `advisor-agent/src/` (root), not `web/src/`. Web's `tsconfig.json` inherits this without overriding. Fix: Lambert adds `"rootDir": "src"` to `web/tsconfig.json` in M1. Vite dev server is **unaffected** — only `npm run build` breaks.
+
+3. **`ADVISOR_DEMO_MODE=true` blocks all admin routes (403)** — correct by design. Admin routes need `ADVISOR_DEMO_MODE` unset (or `false`) to pass the gate; M1 will add real JWT validation.
+
+4. **Health endpoint is at `/health`, not `/api/health`** — only live endpoint in M0. All other routes return 501 (stub) or 404 (no root route defined).
+
+5. **Root `package.json` has no `dev` script** — no one-command workspace dev boot yet. To be added as a tooling improvement in M1 (Parker scope).

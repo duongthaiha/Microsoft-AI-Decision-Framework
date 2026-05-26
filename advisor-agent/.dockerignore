@@ -1,0 +1,9 @@
+node_modules
+.git
+dist
+.azure
+tests
+docs
+*.local.env
+playwright-report
+test-results

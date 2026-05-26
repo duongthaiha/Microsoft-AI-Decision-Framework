@@ -200,6 +200,61 @@ When `VITE_ADVISOR_DEMO_MODE=true`: msalInstance initialised with placeholder co
 2. Entra app registration not declarable in Bicep (product-spec §9 requires AdvisorAdmin app role). Recommend AZD postprovision hook or separate step.
 3. Container App resource agentEndpoint is hard-coded pattern string. Add containerapp.bicep module in M1.
 
+#### parker-m0-verification-complete
+
+**By:** Parker (Infra/DevOps Engineer)  
+**Date:** 2026-05-26  
+**Commit verified:** 9250e2c  
+**Status:** Boot smoke test complete — merged to decisions log
+
+**§A — M0 Scaffold Boots End-to-End**
+
+M0 monorepo architecture is verified operational on commit 9250e2c. Full dependency install via root workspace succeeds (518 packages, zero peer-dep errors). Agent backend compiles cleanly (TypeScript strict mode), boots to port 8080, and serves health endpoint returning 200 JSON. Vite web dev server boots to port 5173 and serves HTTP 200. All non-health agent routes correctly return 501 (M0 stub behaviour, not bugs). Admin routes correctly block with 403 in demo mode. Store methods properly throw NotImplementedError by design.
+
+**§B — Two M1 Papercuts Logged**
+
+Two low-priority DX gaps identified, deferred to M1:
+
+1. **Agent has no `dev` script** — Owner: Dallas. Impact: iterative backend development requires `npm run build` on every change. Fix: add one-line `tsx watch` or `--watch` script to `agent/package.json`. Not a boot blocker.
+
+2. **Web TypeScript config inherits broken `rootDir`** — Owner: Lambert. Impact: `web/tsc --noEmit` fails with TS6059 errors (files not under rootDir). Vite dev server unaffected. Fix: add `"rootDir": "src"` to `web/tsconfig.json` to override inherited base value. Trivial fix, ~1 line.
+
+**§C — Working Dev Loop Command**
+
+Three-command sequence for local development (tested on commit 9250e2c):
+
+*One-time install:*
+```bash
+cd advisor-agent && npm install
+```
+
+*Terminal 1 — Agent backend (build required each time — M0 has no watch mode):*
+```bash
+cd advisor-agent/agent && npm run build && ADVISOR_DEMO_MODE=true ADVISOR_LOCAL_DEV=true node dist/index.js
+```
+Agent listens on `http://localhost:8080`; health check: `curl http://localhost:8080/health`
+
+*Terminal 2 — Web dev server:*
+```bash
+cd advisor-agent/web && npm run dev
+```
+Vite serves at `http://localhost:5173`
+
+Full one-liner (background agent, foreground Vite):
+```bash
+cd /workspaces/Microsoft-AI-Decision-Framework/advisor-agent && \
+  (cd agent && npm run build && ADVISOR_DEMO_MODE=true ADVISOR_LOCAL_DEV=true node dist/index.js &) && \
+  (cd web && npm run dev)
+```
+
+**§D — Reference**
+
+- Full report: originally inbox/parker-local-boot-report.md (merged 2026-05-26)
+- Commit: 9250e2c
+- M1 follow-ups: Dallas (dev script), Lambert (tsconfig fix), Parker (root workspace dev script)
+
+---
+
 ## Governance
 
 - All meaningful changes require team consensus

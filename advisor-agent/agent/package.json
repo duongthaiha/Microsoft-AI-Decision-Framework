@@ -1,0 +1,39 @@
+{
+  "name": "@advisor/agent",
+  "version": "0.0.1",
+  "description": "AI Project Advisor Agent — backend service (Copilot SDK + Foundry Hosted Agent runtime)",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@azure/cosmos": "^4.1.1",
+    "@azure/identity": "^4.4.1",
+    "@azure/search-documents": "^12.1.0",
+    "express": "^4.19.2"
+  },
+  "peerDependencies": {
+    "@github/copilot-sdk": "*"
+  },
+  "peerDependenciesMeta": {
+    "@github/copilot-sdk": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.14.0",
+    "eslint": "^9.5.0",
+    "typescript": "^5.4.5",
+    "vitest": "^1.6.0"
+  },
+  "_comments": {
+    "copilot-sdk": "TODO M1: wire @github/copilot-sdk — mark as a required peer dep and add Responses/Invocations bridge once the SDK integration is confirmed."
+  }
+}

@@ -6,3 +6,17 @@
 .squad/.scratch/
 # Squad: SubSquad activation file (local to this machine)
 .squad-workstream
+
+# Build outputs and runtime
+dist/
+node_modules/
+
+# Azure Developer CLI
+.azure/
+
+# Local environment secrets
+*.local.env
+
+# Test results
+playwright-report/
+test-results/

@@ -1,0 +1,42 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "dev"
+    },
+    "location": {
+      "value": "eastus2"
+    },
+    "agentNamePrefix": {
+      "value": "advisor"
+    },
+    "authMode": {
+      "value": "demo"
+    },
+    "demoFlag": {
+      "value": true
+    },
+    "modelPath": {
+      "value": "azure-byom"
+    },
+    "hostedAgentProtocol": {
+      "value": "responses"
+    },
+    "publicNetworking": {
+      "value": true
+    },
+    "skuCosmos": {
+      "value": "Standard"
+    },
+    "skuSearch": {
+      "value": "basic"
+    },
+    "tags": {
+      "value": {
+        "project": "advisor-agent",
+        "environment": "dev"
+      }
+    }
+  }
+}

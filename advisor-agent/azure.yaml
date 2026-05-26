@@ -1,0 +1,38 @@
+# advisor-agent — Azure Developer CLI manifest
+# Docs: https://learn.microsoft.com/azure/developer/azure-developer-cli/
+#
+# Two services:
+#   agent — Node.js Copilot SDK agent, deployed as a Container App (MVP placeholder).
+#           Foundry Hosted Agent deployment is managed via the predeploy hook because
+#           Foundry Hosted Agent Bicep coverage is in preview; the hook calls
+#           `scripts/deploy-hosted-agent.sh` which wraps the Foundry CLI / REST.
+#   web   — React SPA, deployed as an Azure Static Web App.
+#
+# Usage:
+#   azd up          — provision + build + deploy all services
+#   azd provision   — infra only (Bicep)
+#   azd deploy      — build + push images, deploy services
+name: advisor-agent
+
+services:
+  agent:
+    project: ./agent
+    host: containerapp
+    language: ts
+    docker:
+      path: ../Dockerfile
+      context: ..
+
+  web:
+    project: ./web
+    host: staticwebapp
+    language: ts
+
+hooks:
+  predeploy:
+    shell: sh
+    run: |
+      npm run build --workspace=agent
+      npm run build --workspace=web
+    continueOnError: false
+    interactive: false
