@@ -28,7 +28,7 @@ The advisor is a **GitHub Copilot SDK-based agent** (public preview) hosted as a
 
 ### Why it matters
 
-This feature prevents duplicate projects, vague AI requests, and premature technology choices. It turns "I have an AI idea" into a structured decision: outcome, user, behavior, data, risk, deployment, and next engineering action.
+This feature prevents duplicate projects, vague AI requests, and premature technology choices. It turns "I have an AI idea" into a structured decision with a clear output: recommended Microsoft platform, rationale, estimated complexity, and relevant existing-project context when a similar project already exists.
 
 ### What this is not
 
@@ -45,7 +45,7 @@ This feature prevents duplicate projects, vague AI requests, and premature techn
 
 | User or operator | Job to be done | Current pain | Success signal |
 |------------------|----------------|--------------|----------------|
-| Business user / idea submitter | Submit and sharpen an AI project idea without needing to know the Microsoft AI product landscape | Ideas start as business pain, opportunity, or "can AI help?" questions, but lack enough structure for delivery teams | User receives a plain-language readiness brief and can submit a `New` request after confirmation |
+| Business user / idea submitter | Submit and sharpen an AI project idea without needing to know the Microsoft AI product landscape | Ideas start as business pain, opportunity, or "can AI help?" questions, but lack enough structure for delivery teams | User receives a plain-language readiness brief with recommended Microsoft platform, rationale, complexity estimate, and similar-project data when available, then can submit a `New` request |
 | Dev team / intake reviewer | Receive a structured, framework-aligned request instead of a vague idea | Intake work is slow when business context, data boundaries, and expected outcomes are missing | Queue message and brief contain enough context to triage, size, and route the request |
 | Tech lead / architect | Review whether the idea fits the Microsoft AI Decision Framework | Manual triage is inconsistent and easy to bias toward fashionable tools | Brief shows framework scoring, similar projects, risks, and recommended approach |
 | Platform operator | Operate the hosted advisor and queue-backed intake workflow | Auth, secrets, telemetry, and deployment drift can become invisible | Hosted Agent is AZD-deployable, observable, and uses hosted agent identity / managed identity for service access |
@@ -65,10 +65,13 @@ This feature prevents duplicate projects, vague AI requests, and premature techn
 - Durable Project concept that can have one or more Requests linked to it.
 - Project readiness brief with:
   - similar-project matches
+  - current project data for the best similar match when available (for example: project name, owner, status, technologies, and summary)
   - whether the Request is linked to an existing Project or remains a new project candidate
   - missing clarification questions
   - decision-framework scoring
-  - recommended Microsoft AI approach
+  - recommended Microsoft AI platform/approach
+  - rationale for why the platform fits the ask
+  - estimated implementation complexity (Low/Medium/High + short justification)
   - risks and guardrails
   - next engineering actions
 - User confirmation before submission.
@@ -114,7 +117,7 @@ The public Microsoft AI Decision Framework remains the spine: **Phase 1: Busines
 | Phase 1: BXT | Score viability, desirability, and feasibility | BXT answers, score rationale, blockers, confidence |
 | **Step 1b: Reuse Gate** | Search similar Projects, present matches, and ask whether to link this Request to an existing Project or continue as a new project candidate | match list, selected Project ID when chosen, user decision, reuse/extension rationale |
 | Phase 2: Technology Groupings | Ask the nine framework questions only as needed | framework answers by question, assumptions, skipped questions with reason |
-| Phase 3: Scenario-Specific Selection | Produce the recommended approach and readiness brief | recommendation, alternatives, risks, next actions |
+| Phase 3: Scenario-Specific Selection | Produce the recommended approach and readiness brief | recommended Microsoft platform, rationale, estimated complexity, alternatives, risks, next actions |
 | Submission | Ask for confirmation and enqueue the Request | final status, queue message ID, submitted timestamp |
 
 Step 1b is not a replacement for the framework. It is the **reuse checkpoint** that prevents the advisor from recommending a new build when the organization already has a nearby Project on the shelf.
@@ -130,7 +133,7 @@ Step 1b is not a replacement for the framework. It is the **reuse checkpoint** t
 7. User chooses to link the Request to an existing Project or continue as a new project candidate.
 8. Advisor continues the Microsoft AI Decision Framework: outcomes before behaviors, behaviors before platforms.
 9. If key context is missing, advisor asks concise clarification questions and stores each answer against the Request.
-10. When enough context exists, advisor returns a project readiness brief.
+10. When enough context exists, advisor returns a project readiness brief with recommended Microsoft platform, rationale, estimated complexity, and similar-project current data when available.
 11. Advisor asks the user to confirm submission.
 12. On confirmation, the advisor agent persists the Request, preserves any Project link, and writes a message to Azure Storage Queue with `New` status.
 13. User receives a submission confirmation with request ID and the readiness brief summary.
@@ -139,7 +142,7 @@ Step 1b is not a replacement for the framework. It is the **reuse checkpoint** t
 
 | Scenario | Expected behavior | Owner |
 |----------|-------------------|-------|
-| Similar project found with high confidence | Show the match, explain why it is similar, and recommend reuse, extension, or differentiation before submission | Advisor agent |
+| Similar project found with high confidence | Show the match, present current project data (name, owner, status, technologies, summary), explain why it is similar, and recommend reuse, extension, or differentiation before submission | Advisor agent |
 | User chooses an existing Project | Link the Request to that Project in the data store and include the Project ID in the submitted Request/queue payload | Advisor agent |
 | User rejects all similar Projects | Keep the match list and rejection rationale on the Request, then continue as a new project candidate | Advisor agent |
 | No similar project found | Say no close match was found and proceed with framework-guided evaluation | Advisor agent |
@@ -164,7 +167,7 @@ Step 1b is not a replacement for the framework. It is the **reuse checkpoint** t
 | FR-008 | Maintain a Project concept separate from Request | Must | A Project can have multiple linked Requests; a Request can be unlinked until promoted or attached |
 | FR-009 | Apply the Microsoft AI Decision Framework before recommending technology | Must | Brief evaluates outcome, user, behavior, data, actions, governance, scale, skills, and deployment posture |
 | FR-010 | Ask clarification questions when required fields or decision signals are missing | Must | Advisor asks questions before recommendation when outcome/user/behavior/data/risk are incomplete |
-| FR-011 | Produce a project readiness brief | Must | Brief includes matches, Project link/new-candidate state, questions, scoring, recommendation, risks, and next actions |
+| FR-011 | Produce a project readiness brief | Must | Brief includes recommended Microsoft platform, rationale, estimated complexity, matches with current project data when available, Project link/new-candidate state, questions, scoring, risks, and next actions |
 | FR-012 | Require user confirmation before request submission | Must | Queue message is not created until the user confirms |
 | FR-013 | Submit confirmed request to Azure Storage Queue with `New` status | Must | Queue message contains request ID, timestamp, status, Project link when applicable, readiness brief reference or payload, and submitter identity when available |
 | FR-014 | Use Microsoft Entra sign-in by default | Must | Non-demo environments require authenticated users |
@@ -182,7 +185,8 @@ Step 1b is not a replacement for the framework. It is the **reuse checkpoint** t
 - [ ] The advisor runs Step 1b after Phase 1 BXT and returns similar existing Projects from Azure AI Search or clearly states that similarity search is unavailable/no close match was found.
 - [ ] The user can link the Request to an existing Project or continue as a new project candidate.
 - [ ] The advisor asks clarification questions before producing a recommendation when required context is missing.
-- [ ] The readiness brief includes framework scoring, recommended Microsoft AI approach, risks, and next engineering actions.
+- [ ] The readiness brief includes recommended Microsoft platform, rationale, estimated complexity, framework scoring, risks, and next engineering actions.
+- [ ] When a similar project exists, the brief presents the current project data (at minimum: project name, owner, status, technologies, and summary).
 - [ ] The advisor asks for explicit confirmation before enqueueing the request.
 - [ ] A confirmed Request creates an Azure Storage Queue message with `New` status and includes the Project link when applicable.
 - [ ] Microsoft Entra sign-in is enabled by default and can only be disabled through an explicit demo flag.
