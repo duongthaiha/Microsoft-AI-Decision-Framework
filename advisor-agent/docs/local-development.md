@@ -165,7 +165,7 @@ curl http://localhost:8080/health
 
 ### Known Gaps (M0/M1)
 
-- **AI Search** — Provisioning skipped (eastus2 quota exhausted). Will be available in M1 after quota refresh or region switch.
+- **AI Search** — Now live in `swedencentral` at `https://advisor-search-uwmrjzgkhs2hk.search.windows.net` (Basic SKU). Index schema wiring deferred to M1.
 - **Web SPA deployment** — Static Web App resource exists but hasn't been deployed. Requires `VITE_ADVISOR_CLIENT_ID` and `VITE_ADVISOR_TENANT_ID` for Entra ID (M2). For now, run the web dev server locally (see below).
 - **Foundry Hosted Agent** — Bicep is a stub. Full wiring deferred to M1.
 

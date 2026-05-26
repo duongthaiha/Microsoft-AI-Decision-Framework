@@ -33,13 +33,16 @@
       "value": "basic"
     },
     "deploySearch": {
-      "value": false
+      "value": true
     },
     "deployAoai": {
       "value": true
     },
     "developerPrincipalId": {
       "value": "${AZURE_PRINCIPAL_ID}"
+    },
+    "staticWebAppLocation": {
+      "value": "westeurope"
     },
     "tags": {
       "value": {

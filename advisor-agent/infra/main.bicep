@@ -58,6 +58,9 @@ param deployAoai bool = true
 @description('Object ID of the developer az-login user. Grants Cosmos + AOAI access for local dev with DefaultAzureCredential.')
 param developerPrincipalId string = ''
 
+@description('Azure region for the Static Web App. Must be one of the SWA-supported regions (centralus, eastus2, westus2, westeurope, eastasia). Defaults to westeurope so SWA can co-exist with swedencentral deployments.')
+param staticWebAppLocation string = 'westeurope'
+
 @description('Resource tags applied to every resource.')
 param tags object = {
   project: 'advisor-agent'
@@ -151,7 +154,7 @@ module staticWebApp 'modules/staticwebapp.bicep' = {
   name: 'staticWebApp'
   params: {
     namePrefix: agentNamePrefix
-    location: location
+    location: staticWebAppLocation
     tags: tags
   }
 }
