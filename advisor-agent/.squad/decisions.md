@@ -255,6 +255,42 @@ cd /workspaces/Microsoft-AI-Decision-Framework/advisor-agent && \
 
 ---
 
+#### parker-azd-deploy-partial-green
+
+**Date:** 2026-05-26T21:52:57Z  
+**Author:** Parker (DevOps/Infra)  
+**Status:** 🟡 Partial green
+
+**Container App URL:** `https://advisor-agent-app.niceflower-d3218211.eastus2.azurecontainerapps.io`  
+**Health Response:** `{"status":"ok","service":"advisor-agent","version":"0.0.1"}` ✅
+
+**What Landed (M0→Azure):**
+
+- **Provisioned:** Cosmos DB (NoSQL, sessions/requests/projects/org-context), Azure OpenAI (gpt-4.1-mini, 10K TPM), Container Registry (Basic), Container App Environment + Container App (agent), Log Analytics, Application Insights.
+- **Deployed:** Agent image (dist/ built locally, pushed to ACR, deployed to Container App).
+- **Env Files Written:** `.azure/advisor-dev/.env`, `agent/.env.local`, `web/.env.local` with all resource endpoints and credentials.
+
+**What Did NOT Land (Deferred):**
+
+- **AI Search:** eastus2 quota exhausted → workaround documented (`deploySearch: false` in parameters; re-enable when quota available or override region to swedencentral/westus3).
+- **Static Web App Deploy:** SWA resource provisioned and tagged, but `azd deploy web` not run. Blocked on Entra client ID/tenant ID (M2). M1 path: `VITE_ADVISOR_DEMO_MODE=true` + `azd deploy web`.
+- **Foundry Hosted Agent:** `infra/modules/foundry.bicep` remains a placeholder stub. Container App serves as M0 runtime. Full Foundry wiring deferred to M1 (scripts/deploy-hosted-agent.sh).
+
+**Verified Hybrid-Mode Command (Recommended for Local Dev):**
+
+```bash
+cd agent && set -a && source .env.local && set +a && node dist/index.js
+```
+Agent boots to `localhost:8080` with `DefaultAzureCredential` → deployed Azure resources.
+
+**Three Follow-Up Tasks for M1:**
+
+1. **Scripts/deploy-hosted-agent.sh:** Author Foundry Hosted Agent wiring (Parker + Ripley). Bridge predeploy hook to full agent orchestration. Reference: https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents.
+2. **Entra App Registration & M2 SPA Wiring:** Complete `VITE_ADVISOR_CLIENT_ID`, `VITE_ADVISOR_TENANT_ID` integration; run `azd deploy web` (Lambert + Ripley).
+3. **Cosmos Serverless Mode & TTL:** Evaluate `"capabilities": [{"name": "EnableServerless"}]` for true serverless billing. Set container TTL before prod. Verify role scope narrowed to container level (Parker).
+
+---
+
 ## Governance
 
 - All meaningful changes require team consensus

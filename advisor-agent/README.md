@@ -18,30 +18,9 @@ This is the scaffolding phase. The directory structure is in place, all TypeScri
 - **Docker** (optional, for building the agent container)
 - **Bicep CLI** (included with `azd`, for IaC validation)
 
-## Local Setup
+## Getting Started
 
-### Install dependencies
-
-```bash
-npm install
-npm run build
-```
-
-### Run in dev mode
-
-**Agent server** (Hosted Agent adapter):
-```bash
-cd agent
-npm run dev
-```
-
-**Web app** (Intake form + admin UI):
-```bash
-cd web
-npm run dev
-```
-
-Both workspaces watch for changes and rebuild on save.
+👉 **[Local Development — Quick Start](./docs/local-development.md)** — Copy-paste runbook for running the advisor locally. Start here.
 
 ## Project Structure
 
@@ -60,6 +39,7 @@ See [IMPLEMENTATION_PLAN.md](./IMPLEMENTATION_PLAN.md) for detailed workspace bo
 
 ## Key Links
 
+- **[docs/local-development.md](./docs/local-development.md)** — How to run locally (start here)
 - **[product-spec.md](./product-spec.md)** — Full PRD with all acceptance criteria and data models
 - **[docs/architecture.md](./docs/architecture.md)** — Architecture overview and design decisions
 - **[docs/deployment.md](./docs/deployment.md)** — Deployment commands and environment setup
