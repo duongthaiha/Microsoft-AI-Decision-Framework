@@ -1,0 +1,22 @@
+{
+  "name": "microsoft-ai-decision-framework-skills",
+  "description": "Reusable Copilot skills for product and architecture planning workflows from the Microsoft AI Decision Framework.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Microsoft AI Decision Framework contributors"
+  },
+  "homepage": "https://github.com/duongthaiha/Microsoft-AI-Decision-Framework",
+  "repository": "https://github.com/duongthaiha/Microsoft-AI-Decision-Framework.git",
+  "license": "MIT",
+  "keywords": [
+    "copilot",
+    "skills",
+    "product-spec",
+    "prd",
+    "azure",
+    "bicep",
+    "azd"
+  ],
+  "category": "engineering-tools",
+  "skills": "skills/"
+}
