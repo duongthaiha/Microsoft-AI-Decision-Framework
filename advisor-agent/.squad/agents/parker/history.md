@@ -147,3 +147,115 @@ cd /workspaces/Microsoft-AI-Decision-Framework/advisor-agent && \
 3. Add `scripts/deploy-hosted-agent.sh` for Foundry Hosted Agent wiring
 4. Narrow Cosmos role assignments from account scope to container scope
 5. Add Cosmos serverless capability for cheaper dev billing
+
+---
+
+## M0→M1 Region Redeploy — 2026-05-26
+
+### Redeploy from eastus2 to swedencentral (parker-3)
+
+✅ **All-green.** Region migration completed successfully.
+
+**Why swedencentral?** First candidate probed. All four required services available:
+- AI Search Basic ✅
+- AOAI gpt-4.1-mini ✅
+- Container Apps ✅
+- Cosmos DB serverless ✅
+
+**Teardown:** `azd down --force --purge` succeeded (~16 min). No orphaned resources. eastus2 region clean.
+
+**Redeploy:** swedencentral region up. New endpoints live.
+
+**New Container App URL:** `https://advisor-agent-app.wittysea-86254dbc.swedencentral.azurecontainerapps.io`
+
+**Static Web Apps region split:** SWA is a CDN-backed global resource. Pinned to `westeurope` (correct by design). Added `staticWebAppLocation` parameter to `infra/main.bicep`. Bicep now splits compute (swedencentral) from SWA (westeurope).
+
+**Bicep changes:**
+1. `infra/main.bicep` — Added `staticWebAppLocation: string = 'westeurope'` parameter; wired to `staticWebApp` module.
+2. `infra/main.parameters.json` — `deploySearch: true`; `staticWebAppLocation: "westeurope"`.
+
+**Local env files updated:**
+- `agent/.env.local` — `SEARCH_ENDPOINT` populated; AOAI + Search endpoints + `APPLICATIONINSIGHTS_CONNECTION_STRING` updated to swedencentral.
+- `web/.env.local` — New Container App URL populated; Static Web App URL updated.
+
+**Smoke test:** ✅ `GET /health` returns `{"status":"ok","service":"advisor-agent","version":"0.0.1"}`
+
+**Caveats:**
+- Foundry Hosted Agent Bicep still a stub (M1)
+- AI Search index schema still missing (Dallas M1)
+- SWA CLI x86-only binary breaks ARM aarch64 codespace (Parker M2, workaround: GitHub Actions + Azure Cloud Shell documented)
+- Cosmos role scope still at account level (Parker M1)
+
+**Commit:** fbf39dd
+
+**Decision record:** `.squad/decisions.md` entry #259
+
+---
+
+## Entra SPA Setup — 2026-05-26
+
+### Entra app registration complete (parker-4)
+
+🟢 **Phase 1 DONE** — Entra app registration created and configured.  
+🔴 **Phase 2 BLOCKED** — SWA CLI x86-only; ARM aarch64 codespace incompatible.
+
+**App Registration Details:**
+- Display Name: `advisor-agent-web`
+- **App ID (Client ID):** `4f4f4a4d-e60f-4b86-a681-86059aae4597`
+- **Tenant ID:** `cdfe81b5-821e-4f07-9ea7-516efc8497e4`
+- Object ID: `bfb7a513-c545-4b25-a5db-dab4f7661777`
+- Platform: SPA (Single-Page Application, PKCE)
+- Identifier URI: `api://4f4f4a4d-e60f-4b86-a681-86059aae4597`
+
+**Redirect URIs registered:**
+- `http://localhost:5173` (Vite local dev)
+- `https://polite-mushroom-0a09fa803.7.azurestaticapps.net` (deployed SWA from parker-3 redeploy)
+
+**API Scope (exposed by this app):**
+- `api://4f4f4a4d-e60f-4b86-a681-86059aae4597/access_as_user` ✅ Enabled
+
+**API Permissions:**
+- Microsoft Graph `User.Read` (Delegated) — admin consent ✅ granted
+
+**PKCE Flow:** SPA platform auto-enables access token + ID token issuance. No client secret created (correct for PKCE). All identifiers are public — safe to commit.
+
+**Env files updated:**
+- `web/.env.local` — `VITE_ADVISOR_TENANT_ID`, `VITE_ADVISOR_CLIENT_ID`, `VITE_AZURE_REDIRECT_URI`, `VITE_API_BASE_URL`, `VITE_STATIC_WEB_APP_URL` all populated.
+- `agent/.env.local` — No change needed; `AZURE_TENANT_ID` already present.
+
+**Smoke test:** ✅ `cd web && npm run dev → curl http://localhost:5173 → HTTP 200`
+
+### Phase 2 blocker — SWA CLI x86-only
+
+Root cause: Codespace ARM aarch64. SWA CLI deployment binary is x86-64 ELF only. No ARM Linux variant in catalogue.
+
+Vite build **succeeded** — `web/dist/` compiled and ready to deploy.
+
+**Unblocking paths (for Ha):**
+
+**Option A (recommended):** GitHub Actions (~5 min)
+1. Get SWA deployment token: `az staticwebapp secrets list --name "advisor-web-uwmrjzgkhs2hk" --resource-group "rg-advisor-dev" --query "properties.apiKey" -o tsv`
+2. Set as GitHub secret `AZURE_STATIC_WEB_APPS_API_TOKEN`
+3. Create `.github/workflows/deploy-web.yml` (template in full report)
+4. `gh workflow run deploy-web.yml`
+
+**Option B:** x86-64 machine / Azure Cloud Shell
+- From any x86 environment: `az login` → `azd env select advisor-dev` → `azd deploy web`
+
+### M1 Backend Auth Wiring (Dallas critical path)
+
+Frontend will request tokens scoped to `api://4f4f4a4d-e60f-4b86-a681-86059aae4597`. Backend must validate:
+- Token `aud` (audience) claim == `api://4f4f4a4d-e60f-4b86-a681-86059aae4597`
+- Token issuer matches tenant `cdfe81b5-821e-4f07-9ea7-516efc8497e4`
+
+Stub location: `agent/src/auth/identity.ts` (marked "M1: the JWT validation middleware will attach…")
+
+### M1 follow-ups
+
+| Task | Owner | Notes |
+|---|---|---|
+| Define `AdvisorAdmin` app role on app registration | Parker | Required by FR-021; add once backend role-check middleware ready |
+| Implement backend JWT validation (audience + issuer) | Dallas | Critical path for M2 sign-in to work |
+| Plan app role assignment workflow | Ha / Parker | Portal or AZD postprovision hook |
+
+**Decision record:** `.squad/decisions.md` entry #260

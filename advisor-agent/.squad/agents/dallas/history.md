@@ -37,3 +37,24 @@
 ## Team Update — 2026-05-26 M0 scaffold complete
 
 M0 delivered cohesively across 7 specialists: monorepo structure, backend TS scaffold, React web app, Bicep infra, tests with AC mapping, UX direction, and Constitution-voice documentation. All code installs, type-checks, and passes tests.
+
+---
+
+## M1 Auth Wiring — Backend JWT Validation (2026-05-26)
+
+### Critical path for M2 production sign-in
+
+Entra app registration now live (parker-4 phase 1 complete). Frontend will request access tokens scoped to `api://4f4f4a4d-e60f-4b86-a681-86059aae4597`.
+
+**Backend must validate:**
+1. Token `aud` (audience) claim == `api://4f4f4a4d-e60f-4b86-a681-86059aae4597`
+2. Token `iss` (issuer) claim matches tenant `cdfe81b5-821e-4f07-9ea7-516efc8497e4` (format: `https://login.microsoftonline.com/{tenantId}/v2.0`)
+
+**Location of M0 stub:** `agent/src/auth/identity.ts` — marked "M1: the JWT validation middleware will attach…"
+
+**App IDs (safe to commit — public identifiers):**
+- Client ID: `4f4f4a4d-e60f-4b86-a681-86059aae4597`
+- Tenant ID: `cdfe81b5-821e-4f07-9ea7-516efc8497e4`
+- Scope: `api://4f4f4a4d-e60f-4b86-a681-86059aae4597/access_as_user`
+
+**Decision record:** `.squad/decisions.md` entry #260 (parker-entra-and-web-deploy, section §B &amp; §E)

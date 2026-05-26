@@ -291,6 +291,184 @@ Agent boots to `localhost:8080` with `DefaultAzureCredential` → deployed Azure
 
 ---
 
+#### parker-region-redeploy
+
+**Date:** 2026-05-26T21:54:53Z  
+**Author:** Parker (DevOps/Infra)  
+**Status:** ✅ Full green — all M0+M1 infra live in `swedencentral`  
+**Commit:** fbf39dd
+
+**§A — Region Selected: swedencentral**
+
+Probed swedencentral first. All four required services confirmed available:
+
+| Service | Evidence |
+|---|---|
+| AI Search Basic | Probe service provisioned successfully in under 30 seconds; probe RG cleaned up. |
+| AOAI gpt-4.1-mini | `az cognitiveservices model list -l swedencentral` confirmed `gpt-4.1-mini 2025-04-14` in model catalogue. |
+| Container Apps | Provisioned cleanly; `advisor-agent-app` deployed and serving traffic. |
+| Cosmos DB | Provisioned cleanly; serverless-compatible endpoint live. |
+
+**Key decision:** `Microsoft.Web/staticSites` (Static Web Apps) unavailable in swedencentral. Fixed by adding `staticWebAppLocation` parameter to `infra/main.bicep` defaulting to `westeurope`. SWAs are CDN-backed global resources; co-location with compute not required. Parameter documented in `main.parameters.json`.
+
+**§B — Teardown: eastus2 Clean**
+
+`azd down --force --purge` succeeded (~16 minutes). AOAI account, Log Analytics, resource group fully purged. No orphaned advisor resources.
+
+**§C — New Endpoints**
+
+| Resource | Value |
+|---|---|
+| **Container App URL** | `https://advisor-agent-app.wittysea-86254dbc.swedencentral.azurecontainerapps.io` |
+| **AI Search endpoint** | `https://advisor-search-uwmrjzgkhs2hk.search.windows.net` |
+| **Cosmos endpoint** | `https://advisor-cosmos-uwmrjzgkhs2hk.documents.azure.com:443/` |
+| **AOAI endpoint** | `https://advisor-aoai-uwmrjzgkhs2hk.openai.azure.com/` |
+| **Static Web App** | `https://polite-mushroom-0a09fa803.7.azurestaticapps.net` (westeurope, undeployed — M2) |
+
+**§D — Smoke Test: All Passed**
+
+- `GET /health` on Container App → `{"status":"ok","service":"advisor-agent","version":"0.0.1"}` ✅
+- AI Search: `provisioningState: succeeded`, `sku: basic`, `location: Sweden Central` ✅
+- Cosmos `publicNetworkAccess: Enabled` (dev posture, correct per spec §10) ✅
+- Hybrid mode boot: `cd agent && set -a && source .env.local && set +a && node dist/index.js` → `localhost:8080/health` ✅
+
+**§E — Bicep Changes**
+
+1. `infra/main.bicep` — Added `staticWebAppLocation string = 'westeurope'` parameter; wired to `staticWebApp` module call.
+2. `infra/main.parameters.json` — `deploySearch: true`; `staticWebAppLocation: "westeurope"`.
+
+**§F — Local Env Files Updated**
+
+- `agent/.env.local` — `SEARCH_ENDPOINT` populated; `APPLICATIONINSIGHTS_CONNECTION_STRING` updated to swedencentral ingestion.
+- `web/.env.local` — Deployed Container App URL and Static Web App URL updated.
+
+**§G — Caveats / Gaps**
+
+| Gap | Owner | Milestone |
+|---|---|---|
+| Foundry Hosted Agent Bicep stub | Parker + Ripley | M1 |
+| AI Search index schema | Dallas | M1 |
+| Web SPA SWA deploy | Lambert + Ripley | M2 (blocked on Entra app reg) |
+| SWA CLI x86-only in ARM codespace | Parker | M2 (workaround: deploy from GitHub Actions CI) |
+| Cosmos role scope | Parker | M1 (narrow from account to container) |
+
+The `staticWebAppLocation` split (swedencentral compute + westeurope SWA) is correct long-term architecture.
+
+**§H — References**
+
+- Report: originally `.squad/decisions/inbox/parker-region-redeploy.md` (merged 2026-05-26)
+- Commit: fbf39dd
+- New Container App URL documented in squad record
+
+---
+
+#### parker-entra-and-web-deploy
+
+**Date:** 2026-05-26T21:54:53Z  
+**Author:** Parker (Infra/DevOps Engineer)  
+**Requested by:** Ha Duong  
+**Status:** 🟢 Phase 1 complete — 🔴 Phase 2 blocked (SWA CLI ARM binary; GitHub Actions path documented)
+
+**§A — Phase 1 — Entra App Registration: COMPLETE**
+
+| Field | Value |
+|---|---|
+| Display Name | `advisor-agent-web` |
+| **App ID (Client ID)** | `4f4f4a4d-e60f-4b86-a681-86059aae4597` |
+| **Tenant ID** | `cdfe81b5-821e-4f07-9ea7-516efc8497e4` |
+| Object ID | `bfb7a513-c545-4b25-a5db-dab4f7661777` |
+| Identifier URI | `api://4f4f4a4d-e60f-4b86-a681-86059aae4597` |
+
+**Redirect URIs (SPA Platform):**
+
+- `http://localhost:5173` (local dev)
+- `https://polite-mushroom-0a09fa803.7.azurestaticapps.net` (deployed SWA — from parker-region-redeploy)
+
+**API Permissions:**
+
+- Microsoft Graph `User.Read` (Delegated) — admin consent ✅ granted
+
+**Custom API Scope:**
+
+- `api://4f4f4a4d-e60f-4b86-a681-86059aae4597/access_as_user` — enabled ✅
+
+**CRITICAL — Backend JWT Validation (M1 task for Dallas):**
+
+Frontend requests token scoped to `api://4f4f4a4d-e60f-4b86-a681-86059aae4597`. Backend must validate that incoming token's `aud` claim matches this URI. Currently stubbed in `agent/src/auth/identity.ts` ("M1: the JWT validation middleware will attach…").
+
+**PKCE Token Issuance:**
+
+SPA platform auto-enables access token + ID token issuance (no client secret created — correct for PKCE flows).
+
+**§B — Env File Updates**
+
+**`web/.env.local` (auth-related vars):**
+
+```
+VITE_ADVISOR_DEMO_MODE=true
+VITE_ADVISOR_TENANT_ID=cdfe81b5-821e-4f07-9ea7-516efc8497e4
+VITE_ADVISOR_CLIENT_ID=4f4f4a4d-e60f-4b86-a681-86059aae4597
+VITE_AZURE_REDIRECT_URI=http://localhost:5173
+VITE_API_BASE_URL=https://advisor-agent-app.wittysea-86254dbc.swedencentral.azurecontainerapps.io
+VITE_STATIC_WEB_APP_URL=https://polite-mushroom-0a09fa803.7.azurestaticapps.net
+```
+
+`VITE_ADVISOR_DEMO_MODE=true` kept for local dev (sign-in bypassed). Set to `false` when testing real Entra auth.
+
+**`agent/.env.local`:** No change needed — `AZURE_TENANT_ID` already present.
+
+**§C — Smoke Test: PASSED**
+
+`cd web && npm run dev → curl http://localhost:5173 → HTTP 200` ✅
+
+Server started cleanly; demo mode active; no console warnings.
+
+**§D — Phase 2 — Web SPA Deploy: BLOCKED**
+
+**Root cause:** Codespace runs ARM aarch64. SWA CLI deployment binary is x86-64 ELF only — no ARM variant available.
+
+**Built artefacts:** Vite build completed successfully; `web/dist/` compiled and ready.
+
+**Unblocking paths for Ha:**
+
+**Option A (recommended):** GitHub Actions (~5 minutes)
+1. Get SWA deployment token: `az staticwebapp secrets list --name "advisor-web-uwmrjzgkhs2hk" --resource-group "rg-advisor-dev" --query "properties.apiKey" -o tsv`
+2. Set as GitHub secret `AZURE_STATIC_WEB_APPS_API_TOKEN`
+3. Create `.github/workflows/deploy-web.yml` (template provided in full report)
+4. `gh workflow run deploy-web.yml`
+
+**Option B:** x86-64 machine / WSL2 / Azure Cloud Shell — run `azd deploy web` from x86 environment
+
+**§E — App Role Gap (M1 — Dallas)**
+
+`AdvisorAdmin` app role not yet defined on app registration. Required by FR-021. Once backend role-check middleware ready, Parker will add role to app reg and Ha can assign to users via Portal.
+
+**§F — Verification Steps (require browser)**
+
+Local dev demo-mode: `cd web && npm run dev → http://localhost:5173` (no sign-in)  
+Local dev Entra auth: Set `VITE_ADVISOR_DEMO_MODE=false`, start agent + web dev server, sign in at `http://localhost:5173`  
+Deployed SPA (after Phase 2 unblocks): Sign-in redirect to login.microsoftonline.com; after consent, land on Home page
+
+**§G — Gaps and M1/M2 Follow-Ups**
+
+| Gap | Owner | Milestone | Notes |
+|---|---|---|---|
+| SWA deploy blocked on ARM codespace | Ha | Immediate | See Option A/B above |
+| Backend JWT validation not wired | Dallas | M1 | `agent/src/auth/identity.ts` has M1 stub comment |
+| `AdvisorAdmin` app role not defined | Parker | M1 | Required by FR-021 |
+| App role assignment workflow | Ha / Parker | M1 | Portal or AZD postprovision hook |
+| Token audience validation (`aud`) | Dallas | M1 | Backend must check `aud == "api://4f4f4a4d-e60f-4b86-a681-86059aae4597"` |
+| Vite env vars for deployed SPA | Ha (GH Actions) | Immediate | See workflow — wire `VITE_API_BASE_URL` to new Container App URL |
+
+**§H — References**
+
+- Report: originally `.squad/decisions/inbox/parker-entra-and-web.md` (merged 2026-05-26)
+- App ID: `4f4f4a4d-e60f-4b86-a681-86059aae4597` (safe to commit — public identifier)
+- Tenant ID: `cdfe81b5-821e-4f07-9ea7-516efc8497e4` (safe to commit — public identifier)
+- M1 backend wiring: Dallas (JWT validation)
+
+---
+
 ## Governance
 
 - All meaningful changes require team consensus
