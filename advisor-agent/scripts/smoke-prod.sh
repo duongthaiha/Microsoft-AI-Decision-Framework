@@ -168,16 +168,18 @@ else
   HTTP_CODE=$(echo "$SESSIONS_RESPONSE" | tail -1)
   SESSIONS_BODY=$(echo "$SESSIONS_RESPONSE" | head -n -1)
 
-  if [[ "$HTTP_CODE" == "200" ]]; then
+  # Dallas's POST /sessions route returns 201 (Created) — RESTfully correct.
+  # Accept 201 (and 200 as fallback for any reverse proxy that strips it).
+  if [[ "$HTTP_CODE" == "201" ]] || [[ "$HTTP_CODE" == "200" ]]; then
     SMOKE_SESSION_ID=$(echo "$SESSIONS_BODY" | grep -o '"id":"[^"]*"' | head -1 | sed 's/"id":"//;s/"//')
     if [[ -n "$SMOKE_SESSION_ID" ]]; then
       pass "POST /sessions (auth) → HTTP $HTTP_CODE, sessionId: ${SMOKE_SESSION_ID}"
     else
-      pass "POST /sessions (auth) → HTTP $HTTP_CODE (response body missing 'id' — verify shape when Dallas's route lands)"
+      pass "POST /sessions (auth) → HTTP $HTTP_CODE (response body missing 'id' — check Dallas's session shape)"
       SMOKE_SESSION_ID="smoke-fallback-session"
     fi
   else
-    fail "POST /sessions (auth) → HTTP $HTTP_CODE (expected 200 — ❌ will fail until Dallas's session creation route lands)"
+    fail "POST /sessions (auth) → HTTP $HTTP_CODE (expected 201 — will fail until Dallas's session creation route is deployed)"
     SMOKE_SESSION_ID=""
   fi
 

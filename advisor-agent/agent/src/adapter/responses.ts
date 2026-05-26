@@ -133,14 +133,45 @@ export function createResponsesAdapter(deps: ResponsesAdapterDeps): Router {
         timestamp: new Date().toISOString(),
       });
 
-      // Create or update request record
+      // Load org context
+      const orgCtx = await deps.getOrgCtx();
+
+      // Run advisor reasoning loop — wrap separately so failures return 502
+      let loopResult;
+      try {
+        loopResult = await runAdvisorLoop(
+          {
+            businessOutcome: intake.businessOutcome ?? "",
+            targetUsers: intake.targetUsers ?? "",
+            desiredBehavior: intake.desiredBehavior ?? "",
+            dataSources: Array.isArray(intake.dataSources) ? intake.dataSources.join(", ") : intake.dataSources,
+            actions: Array.isArray(intake.actions) ? intake.actions.join(", ") : intake.actions,
+            constraints: Array.isArray(intake.constraints) ? intake.constraints.join(", ") : intake.constraints,
+          },
+          [] as ChatCompletionMessageParam[],
+          {
+            aoaiClient: deps.aoaiClient,
+            deployment: deps.aoaiDeployment,
+            projectSearch: deps.projectSearch,
+            orgCtx,
+          }
+        );
+      } catch (modelErr) {
+        console.error("[responses-adapter] error:", modelErr);
+        return res.status(502).json({
+          error: "advisor_unavailable",
+          reason: (modelErr as Error).message ?? "Model call failed",
+        });
+      }
+
+      // Persist request record AFTER model succeeds (transactional — no orphaned drafts on failure)
       let requestRecord = await findOpenRequest(deps.requestStore, ownerId, sessionId);
       if (!requestRecord) {
         requestRecord = await deps.requestStore.createRequest(ownerId, sessionId, intake.title ?? intake.businessOutcome?.slice(0, 60) ?? "Request");
       }
 
-      // Patch intake fields onto request
-      await deps.requestStore.updateRequest(ownerId, requestRecord.requestId, {
+      // Patch intake fields and framework results onto request
+      const patch: Parameters<typeof deps.requestStore.updateRequest>[2] = {
         title: intake.title ?? requestRecord.title,
         businessOutcome: intake.businessOutcome ?? requestRecord.businessOutcome,
         targetUsers: intake.targetUsers ?? requestRecord.targetUsers,
@@ -148,37 +179,10 @@ export function createResponsesAdapter(deps: ResponsesAdapterDeps): Router {
         dataSources: Array.isArray(intake.dataSources) ? intake.dataSources.join(", ") : (intake.dataSources ?? requestRecord.dataSources),
         actions: Array.isArray(intake.actions) ? intake.actions.join(", ") : (intake.actions ?? requestRecord.actions),
         constraints: Array.isArray(intake.constraints) ? intake.constraints.join(", ") : (intake.constraints ?? requestRecord.constraints),
-      });
-
-      // Load org context
-      const orgCtx = await deps.getOrgCtx();
-
-      // Run advisor reasoning loop
-      const loopResult = await runAdvisorLoop(
-        {
-          businessOutcome: intake.businessOutcome ?? "",
-          targetUsers: intake.targetUsers ?? "",
-          desiredBehavior: intake.desiredBehavior ?? "",
-          dataSources: Array.isArray(intake.dataSources) ? intake.dataSources.join(", ") : intake.dataSources,
-          actions: Array.isArray(intake.actions) ? intake.actions.join(", ") : intake.actions,
-          constraints: Array.isArray(intake.constraints) ? intake.constraints.join(", ") : intake.constraints,
-        },
-        [] as ChatCompletionMessageParam[],
-        {
-          aoaiClient: deps.aoaiClient,
-          deployment: deps.aoaiDeployment,
-          projectSearch: deps.projectSearch,
-          orgCtx,
-        }
-      );
-
-      // Persist framework results onto the request record
-      const patch: Parameters<typeof deps.requestStore.updateRequest>[2] = {
         status: loopResult.readinessBrief ? "ReadyForConfirmation" : "Draft",
         updatedAt: new Date().toISOString(),
         orgContextVersion: loopResult.orgContextVersion,
       };
-      if (loopResult.bxtScore) patch.frameworkAnswers = { ...requestRecord.frameworkAnswers };
       if (loopResult.searchMatches) patch.similarProjectMatches = loopResult.searchMatches;
       if (loopResult.reuseDecision) patch.reuseDecision = loopResult.reuseDecision;
       if (loopResult.readinessBrief) patch.readinessBrief = loopResult.readinessBrief;
@@ -252,6 +256,21 @@ function handleError(err: unknown, res: Response) {
   const code = (err as { code?: number }).code;
   if (code === 404) {
     return res.status(404).json({ error: "Not found" });
+  }
+  // 502 Bad Gateway for upstream model/AOAI call failures
+  const errMsg = (err as Error).message ?? "";
+  const isModelError =
+    errMsg.includes("openai") ||
+    errMsg.includes("AOAI") ||
+    errMsg.includes("Azure") ||
+    errMsg.includes("cognitiveservices") ||
+    errMsg.includes("Service unavailable") ||
+    errMsg.includes("timeout") ||
+    errMsg.includes("rate limit") ||
+    (err as { status?: number }).status === 429 ||
+    (err as { status?: number }).status === 503;
+  if (isModelError) {
+    return res.status(502).json({ error: "advisor_unavailable", reason: errMsg });
   }
   res.status(500).json({ error: "Internal server error" });
 }

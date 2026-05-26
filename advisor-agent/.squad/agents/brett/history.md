@@ -97,3 +97,69 @@ Check 1 (health) passes against deployed CA.  Check 2 (unauthenticated advise �
 
 
 M0 delivered cohesively across 7 specialists: monorepo structure, backend TS scaffold, React web app, Bicep infra, tests with AC mapping, UX direction, and Constitution-voice documentation. All code installs, type-checks, and passes tests.
+## M1 — Reasoning Loop + Session Management Integration Tests (2026-05-26)
+
+### What I built
+
+**Layer 1 — `agent/src/__tests__/reasoning-loop.test.ts`:**
+7 Vitest contract tests covering the M1 happy paths:
+1. POST /sessions → 201 + ownerId bound to JWT oid (FR-018, FR-019, FR-020)
+2. GET /sessions isolation — only caller's sessions returned (FR-019)
+3. GET /sessions/:id cross-user → 404 (no info disclosure, FR-019)
+4. POST /v1/responses happy path — Hosted Agent Responses shape, model called, request persisted (FR-003, FR-005, FR-018)
+5. POST /v1/responses cross-user session → 404, reasoning does not run (FR-019)
+6. POST /v1/responses no sessionId → inline session creation, sessionId in response (FR-018)
+7. POST /v1/responses model throws → 502 [PROACTIVE — contract gap, Dallas returns 500]
+
+**Layer 2 — `scripts/smoke-prod.sh`:**
+Extended with Checks 4–5 (authenticated), gated on `SMOKE_TOKEN` env var. Includes SMOKE_TOKEN acquisition instructions (browser DevTools) and M2 CI automation backlog (service-principal client-credentials grant).
+
+### Discovered State
+
+Dallas's M1 commit was on disk when tests ran. 6/7 tests immediately verified. Key contract deltas discovered:
+- POST /sessions returns **201** (not 200 as spec said) — RESTfully correct, suite codifies 201
+- GET /sessions response is **`{ sessions: [...] }`** (envelope), not a bare array
+- POST /v1/responses response uses top-level **`sessionId`** string (not `session: { id }`)
+
+### Mock Patterns (for future test reference)
+
+**Cosmos mock pattern (ISessionStore / IRequestStore):**
+Use Map-backed in-memory classes with `vi.fn()` methods, passed via `ResponsesAdapterDeps` DI.
+No `vi.mock('@azure/cosmos')` needed — the adapter accepts interface types, not class constructors.
+`listMyRequests` returns `[]` to ensure `findOpenRequest` always triggers `createRequest` on first turn.
+
+**Azure AI Search mock pattern (IProjectSearch):**
+Duck-typed `MockProjectSearch` class with `vi.fn() findSimilar` returning preset `SimilarProjectMatch[]`.
+Passed as `projectSearch` in deps — no module-level mock needed.
+Multi-turn tool-call verification (actually exercising `searchSimilarProjects`) is M2 backlog.
+
+**Model call mock pattern (AzureOpenAI):**
+Duck-type a plain object: `{ chat: { completions: { create: vi.fn() } } } as unknown as AzureOpenAI`.
+Returning `{ choices: [{ finish_reason: 'stop', message: { role: 'assistant', content: TEXT, tool_calls: undefined } }] }`
+causes Dallas's agentic loop to exit after one iteration — clean and deterministic.
+For model-throws: `mockChatCreate.mockRejectedValue(new Error('Service unavailable'))`.
+
+**Hosted Agent Responses contract testing:**
+Assert `res.body.object === 'response'`, `res.body.status === 'completed'`, `Array.isArray(res.body.output)`,
+`res.body.output[0].content[0].text` non-empty. These constitute the Hosted Agent Responses protocol shape.
+
+### Open Contract Gap
+
+**Test 7 (502 for model errors) — PROACTIVE:**
+Dallas's `handleError` returns 500 for all non-404 errors. Contract specifies 502 (Bad Gateway) for AzureOpenAI failures to distinguish upstream vs. application failures.
+Fix: wrap `runAdvisorLoop` call in a specific catch block returning 502.
+Flip Test 7 from [PROACTIVE] → [VERIFIED] once Dallas adds 502 handling.
+
+### Run counts
+
+- **auth-contract.test.ts**: 11/11 passed (same as M0, unchanged)
+- **reasoning-loop.test.ts**: 6/7 passed, 1 proactive fail (Test 7 — 502 contract gap)
+- **Total**: 17/18 passing
+
+### How M2 tests will be added
+
+1. **Multi-turn AOAI mock**: sequence tool_calls responses to exercise BXT → Search → Brief tool chain; add `advisor-loop-full.test.ts`.
+2. **Playwright E2E**: sign-in → intake form → session list once Lambert's MSAL UI stabilises.
+3. **Smoke token automation**: service-principal client-credentials grant once Parker provisions CI SP.
+4. **Test 7 flip**: once Dallas adds 502 model-error handling, change `[PROACTIVE]` → `[VERIFIED]`.
+
