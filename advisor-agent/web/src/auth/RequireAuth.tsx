@@ -14,14 +14,17 @@ export function RequireAuth({ children }: RequireAuthProps) {
     return <>{children}</>;
   }
 
+  function handleSignIn() {
+    instance.loginPopup(loginRequest).catch((err) => {
+      console.error('[RequireAuth] loginPopup failed:', err);
+    });
+  }
+
   return (
     <main className="auth-gate">
       <h1>Sign in to continue</h1>
       <p>The AI Project Advisor requires a Microsoft Entra account.</p>
-      <button
-        type="button"
-        onClick={() => instance.loginRedirect(loginRequest)}
-      >
+      <button type="button" onClick={handleSignIn}>
         Sign in with Microsoft
       </button>
     </main>

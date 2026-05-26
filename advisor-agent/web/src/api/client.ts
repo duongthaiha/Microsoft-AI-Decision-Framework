@@ -1,3 +1,4 @@
+import { InteractionRequiredAuthError } from '@azure/msal-browser';
 import { msalInstance, loginRequest, isDemoMode } from '../auth/msal-config';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL ?? '/api';
@@ -14,8 +15,18 @@ async function getAccessToken(): Promise<string> {
       account: accounts[0],
     });
     return result.accessToken;
-  } catch {
-    // Token refresh failed — caller should handle re-auth.
+  } catch (err) {
+    if (err instanceof InteractionRequiredAuthError) {
+      try {
+        const result = await msalInstance.acquireTokenPopup({
+          ...loginRequest,
+          account: accounts[0],
+        });
+        return result.accessToken;
+      } catch {
+        return '';
+      }
+    }
     return '';
   }
 }

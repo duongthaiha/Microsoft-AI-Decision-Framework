@@ -15,6 +15,9 @@ if (!isDemoMode && (!tenantId || !clientId)) {
   );
 }
 
+const redirectUri =
+  import.meta.env.VITE_AZURE_REDIRECT_URI ?? window.location.origin;
+
 export const msalConfig: Configuration = isDemoMode
   ? {
       // Demo mode: MSAL is initialised but auth is bypassed in RequireAuth.
@@ -23,12 +26,16 @@ export const msalConfig: Configuration = isDemoMode
         authority: 'https://login.microsoftonline.com/common',
         redirectUri: window.location.origin,
       },
+      cache: {
+        cacheLocation: 'sessionStorage',
+        storeAuthStateInCookie: false,
+      },
     }
   : {
       auth: {
         clientId: clientId ?? '',
         authority: `https://login.microsoftonline.com/${tenantId}`,
-        redirectUri: window.location.origin,
+        redirectUri,
       },
       cache: {
         cacheLocation: 'sessionStorage',
