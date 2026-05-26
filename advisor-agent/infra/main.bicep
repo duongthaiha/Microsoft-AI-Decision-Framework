@@ -49,6 +49,15 @@ param skuCosmos string = 'Standard'
 @allowed(['free', 'basic', 'standard', 'standard2', 'standard3'])
 param skuSearch string = 'basic'
 
+@description('Deploy Azure AI Search. Set false if eastus2 has quota constraints (re-add in M1).')
+param deploySearch bool = true
+
+@description('Deploy Azure OpenAI account + gpt-4.1-mini. Set false to skip (e.g. quota constraints).')
+param deployAoai bool = true
+
+@description('Object ID of the developer az-login user. Grants Cosmos + AOAI access for local dev with DefaultAzureCredential.')
+param developerPrincipalId string = ''
+
 @description('Resource tags applied to every resource.')
 param tags object = {
   project: 'advisor-agent'
@@ -79,7 +88,7 @@ module cosmos 'modules/cosmos.bicep' = {
   }
 }
 
-module search 'modules/search.bicep' = {
+module search 'modules/search.bicep' = if (deploySearch) {
   name: 'search'
   params: {
     namePrefix: agentNamePrefix
@@ -99,6 +108,15 @@ module acr 'modules/container-registry.bicep' = {
   }
 }
 
+module aoai 'modules/aoai.bicep' = if (deployAoai) {
+  name: 'aoai'
+  params: {
+    namePrefix: agentNamePrefix
+    location: location
+    tags: tags
+  }
+}
+
 module identity 'modules/identity.bicep' = {
   name: 'identity'
   params: {
@@ -106,8 +124,35 @@ module identity 'modules/identity.bicep' = {
     location: location
     tags: tags
     cosmosAccountId: cosmos.outputs.accountId
-    searchServiceId: search.outputs.serviceId
+    searchServiceId: search.?outputs.serviceId ?? ''
     acrId: acr.outputs.acrId
+    aoaiAccountId: aoai.?outputs.accountId ?? ''
+    developerPrincipalId: developerPrincipalId
+  }
+}
+
+module containerApps 'modules/container-apps.bicep' = {
+  name: 'containerApps'
+  params: {
+    namePrefix: agentNamePrefix
+    location: location
+    tags: tags
+    containerRegistryLoginServer: acr.outputs.loginServer
+    agentIdentityId: identity.outputs.agentIdentityId
+    agentIdentityClientId: identity.outputs.agentIdentityClientId
+    appInsightsConnectionString: monitoring.outputs.appInsightsConnectionString
+    cosmosEndpoint: cosmos.outputs.endpoint
+    searchEndpoint: search.?outputs.endpoint ?? ''
+    aoaiEndpoint: aoai.?outputs.endpoint ?? ''
+  }
+}
+
+module staticWebApp 'modules/staticwebapp.bicep' = {
+  name: 'staticWebApp'
+  params: {
+    namePrefix: agentNamePrefix
+    location: location
+    tags: tags
   }
 }
 
@@ -122,19 +167,58 @@ module foundry 'modules/foundry.bicep' = {
 
 // ---------------------------------------------------------------------------
 // Outputs consumed by AZD and downstream services
+//
+// AZD picks up AZURE_* outputs automatically to wire service deployments.
+// All other outputs land in `.azure/<env>/.env` for local dev use.
 // ---------------------------------------------------------------------------
 
-@description('HTTPS endpoint of the advisor Hosted Agent / Container App.')
-output agentEndpoint string = 'https://${agentNamePrefix}-agent.${location}.azurecontainerapps.io'
+// AZD Container App discovery
+@description('Container App name — AZD uses this to push the advisor image.')
+output AZURE_CONTAINER_APP_NAME string = containerApps.outputs.containerAppName
 
+@description('Container Apps Environment name.')
+output AZURE_CONTAINER_APP_ENVIRONMENT_NAME string = containerApps.outputs.caeName
+
+@description('ACR login server — AZD uses this to tag and push Docker images.')
+output AZURE_CONTAINER_REGISTRY_ENDPOINT string = acr.outputs.loginServer
+
+// AZD Static Web App discovery
+@description('Static Web App name — AZD uses this to deploy the React SPA.')
+output AZURE_STATIC_WEB_APP_NAME string = staticWebApp.outputs.staticWebAppName
+
+// Service endpoints (safe to commit — no keys)
+@description('HTTPS URL of the deployed Container App.')
+output CONTAINER_APP_URL string = containerApps.outputs.containerAppUrl
+
+@description('Cosmos DB account endpoint URL.')
+output COSMOS_ENDPOINT string = cosmos.outputs.endpoint
+
+@description('Azure AI Search endpoint URL. Empty when deploySearch=false.')
+output SEARCH_ENDPOINT string = search.?outputs.endpoint ?? ''
+
+@description('Azure OpenAI endpoint URL. Empty when deployAoai=false.')
+output AOAI_ENDPOINT string = aoai.?outputs.endpoint ?? ''
+
+@description('Azure OpenAI model deployment name.')
+output AOAI_MODEL_DEPLOYMENT string = aoai.?outputs.modelDeploymentName ?? ''
+
+@description('Application Insights connection string (safe for env var; not a secret).')
+output APPLICATIONINSIGHTS_CONNECTION_STRING string = monitoring.outputs.appInsightsConnectionString
+
+@description('Static Web App URL.')
+output STATIC_WEB_APP_URL string = staticWebApp.outputs.staticWebAppUrl
+
+// Identity outputs for local dev wiring
+@description('Client ID of the agent managed identity.')
+output AZURE_AGENT_IDENTITY_CLIENT_ID string = identity.outputs.agentIdentityClientId
+
+// Resource names (for az CLI lookups during ops)
 @description('Cosmos DB account name.')
 output cosmosAccountName string = cosmos.outputs.accountName
 
-@description('Azure AI Search service name.')
-output searchServiceName string = search.outputs.serviceName
+@description('Azure AI Search service name. Empty when deploySearch=false.')
+output searchServiceName string = search.?outputs.serviceName ?? ''
 
-@description('Azure Container Registry login server.')
-output containerRegistryName string = acr.outputs.loginServer
+@description('Log Analytics workspace resource ID.')
+output logAnalyticsWorkspaceId string = monitoring.outputs.workspaceId
 
-@description('Application Insights connection string (use with APPLICATIONINSIGHTS_CONNECTION_STRING).')
-output appInsightsConnectionString string = monitoring.outputs.appInsightsConnectionString

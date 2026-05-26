@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.43.8.12551",
-      "templateHash": "18025438994315685836"
+      "templateHash": "16143691378579339218"
     }
   },
   "parameters": {
@@ -95,6 +95,27 @@
       ],
       "metadata": {
         "description": "Azure AI Search SKU."
+      }
+    },
+    "deploySearch": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Deploy Azure AI Search. Set false if eastus2 has quota constraints (re-add in M1)."
+      }
+    },
+    "deployAoai": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Deploy Azure OpenAI account + gpt-4.1-mini. Set false to skip (e.g. quota constraints)."
+      }
+    },
+    "developerPrincipalId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Object ID of the developer az-login user. Grants Cosmos + AOAI access for local dev with DefaultAzureCredential."
       }
     },
     "tags": {
@@ -436,6 +457,7 @@
       }
     },
     {
+      "condition": "[parameters('deploySearch')]",
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "search",
@@ -651,6 +673,139 @@
       }
     },
     {
+      "condition": "[parameters('deployAoai')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "aoai",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "namePrefix": {
+            "value": "[parameters('agentNamePrefix')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "1298365509165086747"
+            }
+          },
+          "parameters": {
+            "namePrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "Prefix for the resource name."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "metadata": {
+                "description": "Resource tags."
+              }
+            },
+            "modelName": {
+              "type": "string",
+              "defaultValue": "gpt-4.1-mini",
+              "metadata": {
+                "description": "Model to deploy."
+              }
+            },
+            "modelVersion": {
+              "type": "string",
+              "defaultValue": "2025-04-14",
+              "metadata": {
+                "description": "Model version."
+              }
+            },
+            "capacityK": {
+              "type": "int",
+              "defaultValue": 10,
+              "metadata": {
+                "description": "Capacity in thousands of tokens per minute."
+              }
+            }
+          },
+          "variables": {
+            "accountName": "[format('{0}-aoai-{1}', parameters('namePrefix'), uniqueString(resourceGroup().id))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.CognitiveServices/accounts",
+              "apiVersion": "2024-04-01-preview",
+              "name": "[variables('accountName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "kind": "OpenAI",
+              "sku": {
+                "name": "S0"
+              },
+              "properties": {
+                "publicNetworkAccess": "Enabled",
+                "disableLocalAuth": true,
+                "customSubDomainName": "[variables('accountName')]"
+              }
+            },
+            {
+              "type": "Microsoft.CognitiveServices/accounts/deployments",
+              "apiVersion": "2024-04-01-preview",
+              "name": "[format('{0}/{1}', variables('accountName'), parameters('modelName'))]",
+              "sku": {
+                "name": "Standard",
+                "capacity": "[parameters('capacityK')]"
+              },
+              "properties": {
+                "model": {
+                  "format": "OpenAI",
+                  "name": "[parameters('modelName')]",
+                  "version": "[parameters('modelVersion')]"
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', variables('accountName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "accountName": {
+              "type": "string",
+              "value": "[variables('accountName')]"
+            },
+            "accountId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.CognitiveServices/accounts', variables('accountName'))]"
+            },
+            "endpoint": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', variables('accountName')), '2024-04-01-preview').endpoint]"
+            },
+            "modelDeploymentName": {
+              "type": "string",
+              "value": "[parameters('modelName')]"
+            }
+          }
+        }
+      }
+    },
+    {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
       "name": "identity",
@@ -673,10 +828,16 @@
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'cosmos'), '2025-04-01').outputs.accountId.value]"
           },
           "searchServiceId": {
-            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'search'), '2025-04-01').outputs.serviceId.value]"
+            "value": "[coalesce(tryGet(if(parameters('deploySearch'), reference(resourceId('Microsoft.Resources/deployments', 'search'), '2025-04-01'), null()), 'outputs', 'serviceId', 'value'), '')]"
           },
           "acrId": {
             "value": "[reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.acrId.value]"
+          },
+          "aoaiAccountId": {
+            "value": "[coalesce(tryGet(if(parameters('deployAoai'), reference(resourceId('Microsoft.Resources/deployments', 'aoai'), '2025-04-01'), null()), 'outputs', 'accountId', 'value'), '')]"
+          },
+          "developerPrincipalId": {
+            "value": "[parameters('developerPrincipalId')]"
           }
         },
         "template": {
@@ -686,7 +847,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.43.8.12551",
-              "templateHash": "13299426450860610615"
+              "templateHash": "12262889382057788997"
             }
           },
           "parameters": {
@@ -725,12 +886,26 @@
               "metadata": {
                 "description": "Resource ID of the Container Registry (for AcrPull role assignment)."
               }
+            },
+            "aoaiAccountId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Resource ID of the Azure OpenAI account (for Cognitive Services OpenAI User role)."
+              }
+            },
+            "developerPrincipalId": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Object ID of the developer user (az login). When non-empty, grants Cosmos Contributor for local dev."
+              }
             }
           },
           "variables": {
             "acrPullRoleId": "7f951dda-4ed3-4680-a7ca-43fe172d538d",
             "searchIndexDataReaderRoleId": "1407120a-92aa-4202-b7e9-c0e197c71c8f",
-            "cosmosDataReaderRoleId": "00000000-0000-0000-0000-000000000001",
+            "cognitiveServicesOpenAIUserRoleId": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd",
             "cosmosDataContributorRoleId": "00000000-0000-0000-0000-000000000002"
           },
           "resources": [
@@ -763,6 +938,7 @@
               ]
             },
             {
+              "condition": "[not(empty(parameters('searchServiceId')))]",
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
               "name": "[guid(parameters('searchServiceId'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agent-identity', parameters('namePrefix'))), variables('searchIndexDataReaderRoleId'))]",
@@ -777,9 +953,36 @@
               ]
             },
             {
+              "condition": "[not(empty(parameters('aoaiAccountId')))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[guid(parameters('aoaiAccountId'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agent-identity', parameters('namePrefix'))), variables('cognitiveServicesOpenAIUserRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('cognitiveServicesOpenAIUserRoleId'))]",
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agent-identity', parameters('namePrefix'))), '2023-01-31').principalId]",
+                "principalType": "ServicePrincipal",
+                "description": "Agent identity calls Azure OpenAI via managed identity."
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agent-identity', parameters('namePrefix')))]"
+              ]
+            },
+            {
+              "condition": "[and(not(empty(parameters('aoaiAccountId'))), not(empty(parameters('developerPrincipalId'))))]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "name": "[guid(parameters('aoaiAccountId'), parameters('developerPrincipalId'), variables('cognitiveServicesOpenAIUserRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('cognitiveServicesOpenAIUserRoleId'))]",
+                "principalId": "[parameters('developerPrincipalId')]",
+                "principalType": "User",
+                "description": "Developer (az login user) calls Azure OpenAI from local codespace."
+              }
+            },
+            {
               "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
               "apiVersion": "2023-11-15",
-              "name": "[format('{0}/{1}', last(split(parameters('cosmosAccountId'), '/')), guid(parameters('cosmosAccountId'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agent-identity', parameters('namePrefix'))), variables('cosmosDataContributorRoleId'), 'sessions'))]",
+              "name": "[format('{0}/{1}', last(split(parameters('cosmosAccountId'), '/')), guid(parameters('cosmosAccountId'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agent-identity', parameters('namePrefix'))), variables('cosmosDataContributorRoleId')))]",
               "properties": {
                 "scope": "[parameters('cosmosAccountId')]",
                 "roleDefinitionId": "[format('{0}/sqlRoleDefinitions/{1}', parameters('cosmosAccountId'), variables('cosmosDataContributorRoleId'))]",
@@ -792,46 +995,7 @@
             {
               "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
               "apiVersion": "2023-11-15",
-              "name": "[format('{0}/{1}', last(split(parameters('cosmosAccountId'), '/')), guid(parameters('cosmosAccountId'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agent-identity', parameters('namePrefix'))), variables('cosmosDataContributorRoleId'), 'requests'))]",
-              "properties": {
-                "scope": "[parameters('cosmosAccountId')]",
-                "roleDefinitionId": "[format('{0}/sqlRoleDefinitions/{1}', parameters('cosmosAccountId'), variables('cosmosDataContributorRoleId'))]",
-                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agent-identity', parameters('namePrefix'))), '2023-01-31').principalId]"
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agent-identity', parameters('namePrefix')))]"
-              ]
-            },
-            {
-              "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
-              "apiVersion": "2023-11-15",
-              "name": "[format('{0}/{1}', last(split(parameters('cosmosAccountId'), '/')), guid(parameters('cosmosAccountId'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agent-identity', parameters('namePrefix'))), variables('cosmosDataContributorRoleId'), 'projects'))]",
-              "properties": {
-                "scope": "[parameters('cosmosAccountId')]",
-                "roleDefinitionId": "[format('{0}/sqlRoleDefinitions/{1}', parameters('cosmosAccountId'), variables('cosmosDataContributorRoleId'))]",
-                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agent-identity', parameters('namePrefix'))), '2023-01-31').principalId]"
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agent-identity', parameters('namePrefix')))]"
-              ]
-            },
-            {
-              "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
-              "apiVersion": "2023-11-15",
-              "name": "[format('{0}/{1}', last(split(parameters('cosmosAccountId'), '/')), guid(parameters('cosmosAccountId'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agent-identity', parameters('namePrefix'))), variables('cosmosDataReaderRoleId'), 'org-context'))]",
-              "properties": {
-                "scope": "[parameters('cosmosAccountId')]",
-                "roleDefinitionId": "[format('{0}/sqlRoleDefinitions/{1}', parameters('cosmosAccountId'), variables('cosmosDataReaderRoleId'))]",
-                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agent-identity', parameters('namePrefix'))), '2023-01-31').principalId]"
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-agent-identity', parameters('namePrefix')))]"
-              ]
-            },
-            {
-              "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
-              "apiVersion": "2023-11-15",
-              "name": "[format('{0}/{1}', last(split(parameters('cosmosAccountId'), '/')), guid(parameters('cosmosAccountId'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-admin-identity', parameters('namePrefix'))), variables('cosmosDataContributorRoleId'), 'org-context'))]",
+              "name": "[format('{0}/{1}', last(split(parameters('cosmosAccountId'), '/')), guid(parameters('cosmosAccountId'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-admin-identity', parameters('namePrefix'))), variables('cosmosDataContributorRoleId')))]",
               "properties": {
                 "scope": "[parameters('cosmosAccountId')]",
                 "roleDefinitionId": "[format('{0}/sqlRoleDefinitions/{1}', parameters('cosmosAccountId'), variables('cosmosDataContributorRoleId'))]",
@@ -842,43 +1006,15 @@
               ]
             },
             {
+              "condition": "[not(empty(parameters('developerPrincipalId')))]",
               "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
               "apiVersion": "2023-11-15",
-              "name": "[format('{0}/{1}', last(split(parameters('cosmosAccountId'), '/')), guid(parameters('cosmosAccountId'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-admin-identity', parameters('namePrefix'))), variables('cosmosDataReaderRoleId'), 'sessions'))]",
+              "name": "[format('{0}/{1}', last(split(parameters('cosmosAccountId'), '/')), guid(parameters('cosmosAccountId'), parameters('developerPrincipalId'), variables('cosmosDataContributorRoleId')))]",
               "properties": {
                 "scope": "[parameters('cosmosAccountId')]",
-                "roleDefinitionId": "[format('{0}/sqlRoleDefinitions/{1}', parameters('cosmosAccountId'), variables('cosmosDataReaderRoleId'))]",
-                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-admin-identity', parameters('namePrefix'))), '2023-01-31').principalId]"
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-admin-identity', parameters('namePrefix')))]"
-              ]
-            },
-            {
-              "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
-              "apiVersion": "2023-11-15",
-              "name": "[format('{0}/{1}', last(split(parameters('cosmosAccountId'), '/')), guid(parameters('cosmosAccountId'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-admin-identity', parameters('namePrefix'))), variables('cosmosDataReaderRoleId'), 'requests'))]",
-              "properties": {
-                "scope": "[parameters('cosmosAccountId')]",
-                "roleDefinitionId": "[format('{0}/sqlRoleDefinitions/{1}', parameters('cosmosAccountId'), variables('cosmosDataReaderRoleId'))]",
-                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-admin-identity', parameters('namePrefix'))), '2023-01-31').principalId]"
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-admin-identity', parameters('namePrefix')))]"
-              ]
-            },
-            {
-              "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
-              "apiVersion": "2023-11-15",
-              "name": "[format('{0}/{1}', last(split(parameters('cosmosAccountId'), '/')), guid(parameters('cosmosAccountId'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-admin-identity', parameters('namePrefix'))), variables('cosmosDataReaderRoleId'), 'projects'))]",
-              "properties": {
-                "scope": "[parameters('cosmosAccountId')]",
-                "roleDefinitionId": "[format('{0}/sqlRoleDefinitions/{1}', parameters('cosmosAccountId'), variables('cosmosDataReaderRoleId'))]",
-                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-admin-identity', parameters('namePrefix'))), '2023-01-31').principalId]"
-              },
-              "dependsOn": [
-                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', format('{0}-admin-identity', parameters('namePrefix')))]"
-              ]
+                "roleDefinitionId": "[format('{0}/sqlRoleDefinitions/{1}', parameters('cosmosAccountId'), variables('cosmosDataContributorRoleId'))]",
+                "principalId": "[parameters('developerPrincipalId')]"
+              }
             }
           ],
           "outputs": {
@@ -911,9 +1047,343 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.Resources/deployments', 'acr')]",
+        "[resourceId('Microsoft.Resources/deployments', 'aoai')]",
         "[resourceId('Microsoft.Resources/deployments', 'cosmos')]",
         "[resourceId('Microsoft.Resources/deployments', 'search')]"
       ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "containerApps",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "namePrefix": {
+            "value": "[parameters('agentNamePrefix')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          },
+          "containerRegistryLoginServer": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.loginServer.value]"
+          },
+          "agentIdentityId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'identity'), '2025-04-01').outputs.agentIdentityId.value]"
+          },
+          "agentIdentityClientId": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'identity'), '2025-04-01').outputs.agentIdentityClientId.value]"
+          },
+          "appInsightsConnectionString": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.appInsightsConnectionString.value]"
+          },
+          "cosmosEndpoint": {
+            "value": "[reference(resourceId('Microsoft.Resources/deployments', 'cosmos'), '2025-04-01').outputs.endpoint.value]"
+          },
+          "searchEndpoint": {
+            "value": "[coalesce(tryGet(if(parameters('deploySearch'), reference(resourceId('Microsoft.Resources/deployments', 'search'), '2025-04-01'), null()), 'outputs', 'endpoint', 'value'), '')]"
+          },
+          "aoaiEndpoint": {
+            "value": "[coalesce(tryGet(if(parameters('deployAoai'), reference(resourceId('Microsoft.Resources/deployments', 'aoai'), '2025-04-01'), null()), 'outputs', 'endpoint', 'value'), '')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "15280715391772480104"
+            }
+          },
+          "parameters": {
+            "namePrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "Prefix for all resource names."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "metadata": {
+                "description": "Resource tags."
+              }
+            },
+            "containerRegistryLoginServer": {
+              "type": "string",
+              "metadata": {
+                "description": "ACR login server (e.g. advisoracrXXXX.azurecr.io)."
+              }
+            },
+            "agentIdentityId": {
+              "type": "string",
+              "metadata": {
+                "description": "Resource ID of the user-assigned managed identity for the Container App."
+              }
+            },
+            "agentIdentityClientId": {
+              "type": "string",
+              "metadata": {
+                "description": "Client ID of the user-assigned managed identity (for AZURE_CLIENT_ID env var)."
+              }
+            },
+            "appInsightsConnectionString": {
+              "type": "string",
+              "metadata": {
+                "description": "Application Insights connection string."
+              }
+            },
+            "cosmosEndpoint": {
+              "type": "string",
+              "metadata": {
+                "description": "Cosmos DB endpoint URL (injected into app env)."
+              }
+            },
+            "searchEndpoint": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure AI Search endpoint URL (injected into app env)."
+              }
+            },
+            "aoaiEndpoint": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Azure OpenAI endpoint URL (injected into app env). Empty string skips injection."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.App/managedEnvironments",
+              "apiVersion": "2024-03-01",
+              "name": "[format('{0}-cae-{1}', parameters('namePrefix'), uniqueString(resourceGroup().id))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "zoneRedundant": false
+              }
+            },
+            {
+              "type": "Microsoft.App/containerApps",
+              "apiVersion": "2024-03-01",
+              "name": "[format('{0}-agent-app', parameters('namePrefix'))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                  "[format('{0}', parameters('agentIdentityId'))]": {}
+                }
+              },
+              "properties": {
+                "managedEnvironmentId": "[resourceId('Microsoft.App/managedEnvironments', format('{0}-cae-{1}', parameters('namePrefix'), uniqueString(resourceGroup().id)))]",
+                "configuration": {
+                  "ingress": {
+                    "external": true,
+                    "targetPort": 8080,
+                    "transport": "http",
+                    "allowInsecure": false
+                  },
+                  "registries": [
+                    {
+                      "server": "[parameters('containerRegistryLoginServer')]",
+                      "identity": "[parameters('agentIdentityId')]"
+                    }
+                  ]
+                },
+                "template": {
+                  "containers": [
+                    {
+                      "name": "[format('{0}-agent', parameters('namePrefix'))]",
+                      "image": "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest",
+                      "resources": {
+                        "cpu": "[json('0.5')]",
+                        "memory": "1Gi"
+                      },
+                      "env": [
+                        {
+                          "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
+                          "value": "[parameters('appInsightsConnectionString')]"
+                        },
+                        {
+                          "name": "AZURE_CLIENT_ID",
+                          "value": "[parameters('agentIdentityClientId')]"
+                        },
+                        {
+                          "name": "COSMOS_ENDPOINT",
+                          "value": "[parameters('cosmosEndpoint')]"
+                        },
+                        {
+                          "name": "SEARCH_ENDPOINT",
+                          "value": "[parameters('searchEndpoint')]"
+                        },
+                        {
+                          "name": "AOAI_ENDPOINT",
+                          "value": "[parameters('aoaiEndpoint')]"
+                        },
+                        {
+                          "name": "ADVISOR_DEMO_MODE",
+                          "value": "true"
+                        },
+                        {
+                          "name": "NODE_ENV",
+                          "value": "production"
+                        }
+                      ]
+                    }
+                  ],
+                  "scale": {
+                    "minReplicas": 0,
+                    "maxReplicas": 3
+                  }
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.App/managedEnvironments', format('{0}-cae-{1}', parameters('namePrefix'), uniqueString(resourceGroup().id)))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "caeName": {
+              "type": "string",
+              "value": "[format('{0}-cae-{1}', parameters('namePrefix'), uniqueString(resourceGroup().id))]"
+            },
+            "caeId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.App/managedEnvironments', format('{0}-cae-{1}', parameters('namePrefix'), uniqueString(resourceGroup().id)))]"
+            },
+            "caeDefaultDomain": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.App/managedEnvironments', format('{0}-cae-{1}', parameters('namePrefix'), uniqueString(resourceGroup().id))), '2024-03-01').defaultDomain]"
+            },
+            "containerAppName": {
+              "type": "string",
+              "value": "[format('{0}-agent-app', parameters('namePrefix'))]"
+            },
+            "containerAppId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.App/containerApps', format('{0}-agent-app', parameters('namePrefix')))]"
+            },
+            "containerAppUrl": {
+              "type": "string",
+              "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', format('{0}-agent-app', parameters('namePrefix'))), '2024-03-01').configuration.ingress.fqdn)]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Resources/deployments', 'acr')]",
+        "[resourceId('Microsoft.Resources/deployments', 'aoai')]",
+        "[resourceId('Microsoft.Resources/deployments', 'cosmos')]",
+        "[resourceId('Microsoft.Resources/deployments', 'identity')]",
+        "[resourceId('Microsoft.Resources/deployments', 'monitoring')]",
+        "[resourceId('Microsoft.Resources/deployments', 'search')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "staticWebApp",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "namePrefix": {
+            "value": "[parameters('agentNamePrefix')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "tags": {
+            "value": "[parameters('tags')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.43.8.12551",
+              "templateHash": "2830304532006943612"
+            }
+          },
+          "parameters": {
+            "namePrefix": {
+              "type": "string",
+              "metadata": {
+                "description": "Prefix for the resource name."
+              }
+            },
+            "location": {
+              "type": "string",
+              "metadata": {
+                "description": "Azure region for the Static Web App."
+              }
+            },
+            "tags": {
+              "type": "object",
+              "metadata": {
+                "description": "Resource tags."
+              }
+            }
+          },
+          "resources": [
+            {
+              "type": "Microsoft.Web/staticSites",
+              "apiVersion": "2023-01-01",
+              "name": "[format('{0}-web-{1}', parameters('namePrefix'), uniqueString(resourceGroup().id))]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "sku": {
+                "name": "Free",
+                "tier": "Free"
+              },
+              "properties": {
+                "stagingEnvironmentPolicy": "Enabled",
+                "allowConfigFileUpdates": true,
+                "buildProperties": {
+                  "skipGithubActionWorkflowGeneration": true
+                }
+              }
+            }
+          ],
+          "outputs": {
+            "staticWebAppName": {
+              "type": "string",
+              "value": "[format('{0}-web-{1}', parameters('namePrefix'), uniqueString(resourceGroup().id))]"
+            },
+            "staticWebAppId": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.Web/staticSites', format('{0}-web-{1}', parameters('namePrefix'), uniqueString(resourceGroup().id)))]"
+            },
+            "staticWebAppUrl": {
+              "type": "string",
+              "value": "[format('https://{0}', reference(resourceId('Microsoft.Web/staticSites', format('{0}-web-{1}', parameters('namePrefix'), uniqueString(resourceGroup().id))), '2023-01-01').defaultHostname)]"
+            },
+            "defaultHostname": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.Web/staticSites', format('{0}-web-{1}', parameters('namePrefix'), uniqueString(resourceGroup().id))), '2023-01-01').defaultHostname]"
+            }
+          }
+        }
+      }
     },
     {
       "type": "Microsoft.Resources/deployments",
@@ -987,12 +1457,89 @@
     }
   ],
   "outputs": {
-    "agentEndpoint": {
+    "AZURE_CONTAINER_APP_NAME": {
       "type": "string",
       "metadata": {
-        "description": "HTTPS endpoint of the advisor Hosted Agent / Container App."
+        "description": "Container App name — AZD uses this to push the advisor image."
       },
-      "value": "[format('https://{0}-agent.{1}.azurecontainerapps.io', parameters('agentNamePrefix'), parameters('location'))]"
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'containerApps'), '2025-04-01').outputs.containerAppName.value]"
+    },
+    "AZURE_CONTAINER_APP_ENVIRONMENT_NAME": {
+      "type": "string",
+      "metadata": {
+        "description": "Container Apps Environment name."
+      },
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'containerApps'), '2025-04-01').outputs.caeName.value]"
+    },
+    "AZURE_CONTAINER_REGISTRY_ENDPOINT": {
+      "type": "string",
+      "metadata": {
+        "description": "ACR login server — AZD uses this to tag and push Docker images."
+      },
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.loginServer.value]"
+    },
+    "AZURE_STATIC_WEB_APP_NAME": {
+      "type": "string",
+      "metadata": {
+        "description": "Static Web App name — AZD uses this to deploy the React SPA."
+      },
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'staticWebApp'), '2025-04-01').outputs.staticWebAppName.value]"
+    },
+    "CONTAINER_APP_URL": {
+      "type": "string",
+      "metadata": {
+        "description": "HTTPS URL of the deployed Container App."
+      },
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'containerApps'), '2025-04-01').outputs.containerAppUrl.value]"
+    },
+    "COSMOS_ENDPOINT": {
+      "type": "string",
+      "metadata": {
+        "description": "Cosmos DB account endpoint URL."
+      },
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'cosmos'), '2025-04-01').outputs.endpoint.value]"
+    },
+    "SEARCH_ENDPOINT": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure AI Search endpoint URL. Empty when deploySearch=false."
+      },
+      "value": "[coalesce(tryGet(if(parameters('deploySearch'), reference(resourceId('Microsoft.Resources/deployments', 'search'), '2025-04-01'), null()), 'outputs', 'endpoint', 'value'), '')]"
+    },
+    "AOAI_ENDPOINT": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure OpenAI endpoint URL. Empty when deployAoai=false."
+      },
+      "value": "[coalesce(tryGet(if(parameters('deployAoai'), reference(resourceId('Microsoft.Resources/deployments', 'aoai'), '2025-04-01'), null()), 'outputs', 'endpoint', 'value'), '')]"
+    },
+    "AOAI_MODEL_DEPLOYMENT": {
+      "type": "string",
+      "metadata": {
+        "description": "Azure OpenAI model deployment name."
+      },
+      "value": "[coalesce(tryGet(if(parameters('deployAoai'), reference(resourceId('Microsoft.Resources/deployments', 'aoai'), '2025-04-01'), null()), 'outputs', 'modelDeploymentName', 'value'), '')]"
+    },
+    "APPLICATIONINSIGHTS_CONNECTION_STRING": {
+      "type": "string",
+      "metadata": {
+        "description": "Application Insights connection string (safe for env var; not a secret)."
+      },
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.appInsightsConnectionString.value]"
+    },
+    "STATIC_WEB_APP_URL": {
+      "type": "string",
+      "metadata": {
+        "description": "Static Web App URL."
+      },
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'staticWebApp'), '2025-04-01').outputs.staticWebAppUrl.value]"
+    },
+    "AZURE_AGENT_IDENTITY_CLIENT_ID": {
+      "type": "string",
+      "metadata": {
+        "description": "Client ID of the agent managed identity."
+      },
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'identity'), '2025-04-01').outputs.agentIdentityClientId.value]"
     },
     "cosmosAccountName": {
       "type": "string",
@@ -1004,23 +1551,16 @@
     "searchServiceName": {
       "type": "string",
       "metadata": {
-        "description": "Azure AI Search service name."
+        "description": "Azure AI Search service name. Empty when deploySearch=false."
       },
-      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'search'), '2025-04-01').outputs.serviceName.value]"
+      "value": "[coalesce(tryGet(if(parameters('deploySearch'), reference(resourceId('Microsoft.Resources/deployments', 'search'), '2025-04-01'), null()), 'outputs', 'serviceName', 'value'), '')]"
     },
-    "containerRegistryName": {
+    "logAnalyticsWorkspaceId": {
       "type": "string",
       "metadata": {
-        "description": "Azure Container Registry login server."
+        "description": "Log Analytics workspace resource ID."
       },
-      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.loginServer.value]"
-    },
-    "appInsightsConnectionString": {
-      "type": "string",
-      "metadata": {
-        "description": "Application Insights connection string (use with APPLICATIONINSIGHTS_CONNECTION_STRING)."
-      },
-      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.appInsightsConnectionString.value]"
+      "value": "[reference(resourceId('Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.workspaceId.value]"
     }
   }
 }

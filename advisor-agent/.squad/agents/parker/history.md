@@ -101,3 +101,49 @@ cd /workspaces/Microsoft-AI-Decision-Framework/advisor-agent && \
 4. **Health endpoint is at `/health`, not `/api/health`** — only live endpoint in M0. All other routes return 501 (stub) or 404 (no root route defined).
 
 5. **Root `package.json` has no `dev` script** — no one-command workspace dev boot yet. To be added as a tooling improvement in M1 (Parker scope).
+
+---
+
+## M0 AZD Deploy — 2026-05-26
+
+### Deployment status
+- ✅ `azd provision` succeeded: RG `rg-advisor-dev` in eastus2
+- ✅ `azd deploy agent` succeeded: Container App `advisor-agent-app`
+- ✅ `/health` returns `{"status":"ok","service":"advisor-agent","version":"0.0.1"}`
+- ✅ `DefaultAzureCredential` verified against Cosmos
+- 🟡 AI Search skipped — eastus2 `InsufficientResourcesAvailable`; added `deploySearch` toggle
+
+### Key pitfalls encountered
+
+| Pitfall | Fix |
+|---|---|
+| `azd provision` failed: no Docker locally | Added `remoteBuild: true` to agent docker config in azure.yaml |
+| ACR remote build: `write too long` tar error | Improved `.dockerignore` — added `**/node_modules`, `web/`, `infra/`, `.squad/` |
+| Docker build: `Cannot read file '/app/tsconfig.base.json'` | Added `COPY tsconfig.base.json ./` to Dockerfile Stage 1 |
+| Web `tsc` build error: `rootDir` mismatch | Added `"rootDir": "."` override in `web/tsconfig.json` |
+| `azd deploy agent` failed: resource not found | Missing `azd-service-name: agent` tag on Container App; added `union(tags, {'azd-service-name':'agent'})` |
+| Cosmos `sqlRoleAssignment` duplicate bug | Previous code created 3 assignments for same (scope, role, principal); consolidated to 1 |
+| `gpt-4o-mini 2024-07-18` deprecated 2026-03-31 | Switched to `gpt-4.1-mini 2025-04-14` (GA) |
+| eastus2 AI Search quota exhausted | Added `deploySearch bool = false` parameter; documented as M1 follow-up |
+| AZD predeploy hook ran web build before deploy | Updated hook to `VITE_ADVISOR_DEMO_MODE=true` prefix; web build now passes cleanly |
+
+### Key file paths
+- Deploy report: `.squad/decisions/inbox/parker-azd-deploy-report.md`
+- Local dev config: `agent/.env.local`, `web/.env.local` (gitignored)
+- New Bicep modules: `infra/modules/container-apps.bicep`, `infra/modules/aoai.bicep`, `infra/modules/staticwebapp.bicep`
+- Fixed: `infra/modules/identity.bicep` (Cosmos RBAC bug), `infra/main.bicep` (new outputs)
+- Fixed: `web/tsconfig.json` (rootDir), `Dockerfile` (tsconfig.base.json copy), `.dockerignore`
+- AZD env: `.azure/advisor-dev/` (gitignored)
+
+### Endpoints
+- Container App: `https://advisor-agent-app.niceflower-d3218211.eastus2.azurecontainerapps.io`
+- Static Web App: `https://orange-tree-0fd197c0f.7.azurestaticapps.net` (SPA not yet deployed)
+- Cosmos: `https://advisor-cosmos-uwmrjzgkhs2hk.documents.azure.com:443/`
+- AOAI: `https://advisor-aoai-uwmrjzgkhs2hk.openai.azure.com/` (model: gpt-4.1-mini)
+
+### M1 follow-ups
+1. Re-enable AI Search: `azd env set deploySearch true && azd provision` (or try swedencentral)
+2. Deploy web SPA: `azd deploy web` once Entra app registration is created
+3. Add `scripts/deploy-hosted-agent.sh` for Foundry Hosted Agent wiring
+4. Narrow Cosmos role assignments from account scope to container scope
+5. Add Cosmos serverless capability for cheaper dev billing

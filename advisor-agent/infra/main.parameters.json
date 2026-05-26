@@ -3,10 +3,10 @@
   "contentVersion": "1.0.0.0",
   "parameters": {
     "environmentName": {
-      "value": "dev"
+      "value": "${AZURE_ENV_NAME}"
     },
     "location": {
-      "value": "eastus2"
+      "value": "${AZURE_LOCATION}"
     },
     "agentNamePrefix": {
       "value": "advisor"
@@ -32,10 +32,19 @@
     "skuSearch": {
       "value": "basic"
     },
+    "deploySearch": {
+      "value": false
+    },
+    "deployAoai": {
+      "value": true
+    },
+    "developerPrincipalId": {
+      "value": "${AZURE_PRINCIPAL_ID}"
+    },
     "tags": {
       "value": {
         "project": "advisor-agent",
-        "environment": "dev"
+        "environment": "${AZURE_ENV_NAME}"
       }
     }
   }

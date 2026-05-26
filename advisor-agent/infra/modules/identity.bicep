@@ -1,28 +1,34 @@
 /*
   identity.bicep — User-assigned managed identities and role assignments.
 
-  Two identities:
-    agentIdentity   — used by the advisor Hosted Agent / Container App runtime.
+  Two service identities:
+    agentIdentity   — used by the advisor Container App runtime.
     adminIdentity   — used by the admin backend service.
+
+  Optional developer principal:
+    developerPrincipalId — objectId of the `az login` user for local dev.
+    If non-empty, grants Cosmos Data Contributor so DefaultAzureCredential
+    works from the codespace without a service principal.
 
   Role assignment model (product-spec.md §11):
   ┌─────────────────────────────────────────────────────────────────────────┐
   │ agentIdentity                                                           │
-  │   Cosmos DB Built-in Data Contributor  → sessions, requests, projects  │
-  │   Cosmos DB Built-in Data Reader       → org-context                   │
+  │   Cosmos DB Built-in Data Contributor  → account scope (all containers)│
   │   Search Index Data Reader             → Search service                │
   │   AcrPull                              → Container Registry             │
+  │   Cognitive Services OpenAI User       → Azure OpenAI account          │
   ├─────────────────────────────────────────────────────────────────────────┤
   │ adminIdentity                                                           │
-  │   Cosmos DB Built-in Data Contributor  → org-context                   │
-  │   Cosmos DB Built-in Data Reader       → sessions, requests, projects  │
+  │   Cosmos DB Built-in Data Contributor  → account scope                 │
   └─────────────────────────────────────────────────────────────────────────┘
 
-  IMPORTANT — Cosmos DB data-plane role assignments use
-  Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments, NOT ARM RBAC.
-  The built-in role definition IDs below are placeholders; replace with the
-  actual GUIDs for your subscription once confirmed via:
-    az cosmosdb sql role definition list --account-name <name> -g <rg>
+  NOTE on Cosmos data-plane roles:
+  Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments uses well-known IDs:
+    Reader:      00000000-0000-0000-0000-000000000001
+    Contributor: 00000000-0000-0000-0000-000000000002
+  IMPORTANT: Each (scope, roleDefinitionId, principalId) triple must be unique
+  within a Cosmos account. Use ONE assignment per (identity, role) — NOT one
+  per container.
 
   Docs:
     https://learn.microsoft.com/azure/cosmos-db/nosql/security/how-to-grant-data-plane-role-based-access
@@ -47,6 +53,12 @@ param searchServiceId string
 @description('Resource ID of the Container Registry (for AcrPull role assignment).')
 param acrId string
 
+@description('Resource ID of the Azure OpenAI account (for Cognitive Services OpenAI User role).')
+param aoaiAccountId string = ''
+
+@description('Object ID of the developer user (az login). When non-empty, grants Cosmos Contributor for local dev.')
+param developerPrincipalId string = ''
+
 // ---------------------------------------------------------------------------
 // User-Assigned Managed Identities
 // ---------------------------------------------------------------------------
@@ -67,7 +79,6 @@ resource adminIdentity 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01
 // ARM Role Assignments (Azure RBAC)
 // ---------------------------------------------------------------------------
 
-// AcrPull — agent identity pulls images from ACR
 var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
 
 resource agentAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -81,10 +92,9 @@ resource agentAcrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   }
 }
 
-// Search Index Data Reader — agent identity queries Search
 var searchIndexDataReaderRoleId = '1407120a-92aa-4202-b7e9-c0e197c71c8f'
 
-resource agentSearchDataReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource agentSearchDataReader 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(searchServiceId)) {
   name: guid(searchServiceId, agentIdentity.id, searchIndexDataReaderRoleId)
   scope: resourceGroup()
   properties: {
@@ -95,117 +105,79 @@ resource agentSearchDataReader 'Microsoft.Authorization/roleAssignments@2022-04-
   }
 }
 
+// Cognitive Services OpenAI User — agent identity calls Azure OpenAI via managed identity
+var cognitiveServicesOpenAIUserRoleId = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
+
+resource agentAoaiUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(aoaiAccountId)) {
+  name: guid(aoaiAccountId, agentIdentity.id, cognitiveServicesOpenAIUserRoleId)
+  scope: resourceGroup()
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', cognitiveServicesOpenAIUserRoleId)
+    principalId: agentIdentity.properties.principalId
+    principalType: 'ServicePrincipal'
+    description: 'Agent identity calls Azure OpenAI via managed identity.'
+  }
+}
+
+// Developer user — Cognitive Services OpenAI User for local dev
+resource developerAoaiUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(aoaiAccountId) && !empty(developerPrincipalId)) {
+  name: guid(aoaiAccountId, developerPrincipalId, cognitiveServicesOpenAIUserRoleId)
+  scope: resourceGroup()
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', cognitiveServicesOpenAIUserRoleId)
+    principalId: developerPrincipalId
+    principalType: 'User'
+    description: 'Developer (az login user) calls Azure OpenAI from local codespace.'
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Cosmos DB Data-Plane Role Assignments
 //
-// These use Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments, which
-// are distinct from ARM RBAC and operate on the Cosmos DB data plane.
-//
-// Built-in role definition IDs (00000000-... are well-known Cosmos DB roles):
-//   Cosmos DB Built-in Data Reader:      00000000-0000-0000-0000-000000000001
-//   Cosmos DB Built-in Data Contributor: 00000000-0000-0000-0000-000000000002
-//
-// Scope examples:
-//   Account scope:    /subscriptions/{sub}/resourceGroups/{rg}/providers/Microsoft.DocumentDB/databaseAccounts/{account}
-//   Database scope:   .../databaseAccounts/{account}/dbs/advisor
-//   Container scope:  .../databaseAccounts/{account}/dbs/advisor/colls/sessions
-//
-// For production, scope role assignments to the minimum required container,
-// not the entire account.
+// CRITICAL: Each (scope, roleDefinitionId, principalId) triple must be unique
+// within a Cosmos account. Use ONE assignment per (identity, role).
+// Do NOT create multiple assignments for the same (scope, role, principal)
+// even with different GUIDs — Cosmos will reject the duplicates.
 // ---------------------------------------------------------------------------
 
-var cosmosDataReaderRoleId = '00000000-0000-0000-0000-000000000001'
-var cosmosDataContributorRoleId = '00000000-0000-0000-0000-000000000002'
-
-// Agent identity — Data Contributor on sessions, requests, projects
-resource agentCosmosContributorSessions 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = {
-  name: guid(cosmosAccountId, agentIdentity.id, cosmosDataContributorRoleId, 'sessions')
-  parent: existingCosmosAccount
-  properties: {
-    // TODO: Narrow to container scope once containers are provisioned:
-    //   scope: '${cosmosAccountId}/dbs/advisor/colls/sessions'
-    scope: cosmosAccountId
-    roleDefinitionId: '${cosmosAccountId}/sqlRoleDefinitions/${cosmosDataContributorRoleId}'
-    principalId: agentIdentity.properties.principalId
-  }
-}
-
-resource agentCosmosContributorRequests 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = {
-  name: guid(cosmosAccountId, agentIdentity.id, cosmosDataContributorRoleId, 'requests')
-  parent: existingCosmosAccount
-  properties: {
-    scope: cosmosAccountId
-    roleDefinitionId: '${cosmosAccountId}/sqlRoleDefinitions/${cosmosDataContributorRoleId}'
-    principalId: agentIdentity.properties.principalId
-  }
-}
-
-resource agentCosmosContributorProjects 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = {
-  name: guid(cosmosAccountId, agentIdentity.id, cosmosDataContributorRoleId, 'projects')
-  parent: existingCosmosAccount
-  properties: {
-    scope: cosmosAccountId
-    roleDefinitionId: '${cosmosAccountId}/sqlRoleDefinitions/${cosmosDataContributorRoleId}'
-    principalId: agentIdentity.properties.principalId
-  }
-}
-
-// Agent identity — Data Reader on org-context (read-only)
-resource agentCosmosReaderOrgContext 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = {
-  name: guid(cosmosAccountId, agentIdentity.id, cosmosDataReaderRoleId, 'org-context')
-  parent: existingCosmosAccount
-  properties: {
-    scope: cosmosAccountId
-    roleDefinitionId: '${cosmosAccountId}/sqlRoleDefinitions/${cosmosDataReaderRoleId}'
-    principalId: agentIdentity.properties.principalId
-  }
-}
-
-// Admin identity — Data Contributor on org-context
-resource adminCosmosContributorOrgContext 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = {
-  name: guid(cosmosAccountId, adminIdentity.id, cosmosDataContributorRoleId, 'org-context')
-  parent: existingCosmosAccount
-  properties: {
-    scope: cosmosAccountId
-    roleDefinitionId: '${cosmosAccountId}/sqlRoleDefinitions/${cosmosDataContributorRoleId}'
-    principalId: adminIdentity.properties.principalId
-  }
-}
-
-// Admin identity — Data Reader on sessions, requests, projects (admin browse screens)
-resource adminCosmosReaderSessions 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = {
-  name: guid(cosmosAccountId, adminIdentity.id, cosmosDataReaderRoleId, 'sessions')
-  parent: existingCosmosAccount
-  properties: {
-    scope: cosmosAccountId
-    roleDefinitionId: '${cosmosAccountId}/sqlRoleDefinitions/${cosmosDataReaderRoleId}'
-    principalId: adminIdentity.properties.principalId
-  }
-}
-
-resource adminCosmosReaderRequests 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = {
-  name: guid(cosmosAccountId, adminIdentity.id, cosmosDataReaderRoleId, 'requests')
-  parent: existingCosmosAccount
-  properties: {
-    scope: cosmosAccountId
-    roleDefinitionId: '${cosmosAccountId}/sqlRoleDefinitions/${cosmosDataReaderRoleId}'
-    principalId: adminIdentity.properties.principalId
-  }
-}
-
-resource adminCosmosReaderProjects 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = {
-  name: guid(cosmosAccountId, adminIdentity.id, cosmosDataReaderRoleId, 'projects')
-  parent: existingCosmosAccount
-  properties: {
-    scope: cosmosAccountId
-    roleDefinitionId: '${cosmosAccountId}/sqlRoleDefinitions/${cosmosDataReaderRoleId}'
-    principalId: adminIdentity.properties.principalId
-  }
-}
-
-// Reference to the existing Cosmos account (passed in as a resource ID param)
 resource existingCosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2023-11-15' existing = {
   name: last(split(cosmosAccountId, '/'))!
+}
+
+var cosmosDataContributorRoleId = '00000000-0000-0000-0000-000000000002'
+
+// Agent identity — one Data Contributor assignment at account scope (covers all containers)
+resource agentCosmosContributor 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = {
+  name: guid(cosmosAccountId, agentIdentity.id, cosmosDataContributorRoleId)
+  parent: existingCosmosAccount
+  properties: {
+    // Account scope — M1 can narrow to container scope once schema is stable.
+    scope: cosmosAccountId
+    roleDefinitionId: '${cosmosAccountId}/sqlRoleDefinitions/${cosmosDataContributorRoleId}'
+    principalId: agentIdentity.properties.principalId
+  }
+}
+
+// Admin identity — one Data Contributor assignment at account scope
+resource adminCosmosContributor 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = {
+  name: guid(cosmosAccountId, adminIdentity.id, cosmosDataContributorRoleId)
+  parent: existingCosmosAccount
+  properties: {
+    scope: cosmosAccountId
+    roleDefinitionId: '${cosmosAccountId}/sqlRoleDefinitions/${cosmosDataContributorRoleId}'
+    principalId: adminIdentity.properties.principalId
+  }
+}
+
+// Developer (az login user) — Data Contributor for local dev via DefaultAzureCredential
+resource developerCosmosContributor 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = if (!empty(developerPrincipalId)) {
+  name: guid(cosmosAccountId, developerPrincipalId, cosmosDataContributorRoleId)
+  parent: existingCosmosAccount
+  properties: {
+    scope: cosmosAccountId
+    roleDefinitionId: '${cosmosAccountId}/sqlRoleDefinitions/${cosmosDataContributorRoleId}'
+    principalId: developerPrincipalId
+  }
 }
 
 // ---------------------------------------------------------------------------

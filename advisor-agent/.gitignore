@@ -16,6 +16,8 @@ node_modules/
 
 # Local environment secrets
 *.local.env
+.env.local
+**/.env.local
 
 # Test results
 playwright-report/

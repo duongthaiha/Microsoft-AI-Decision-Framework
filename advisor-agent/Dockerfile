@@ -2,6 +2,7 @@
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY package.json package-lock.json* ./
+COPY tsconfig.base.json ./
 COPY agent/package.json ./agent/
 RUN npm install --workspace=agent
 COPY agent/ ./agent/
