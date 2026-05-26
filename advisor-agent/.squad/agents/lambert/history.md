@@ -23,3 +23,30 @@ Dallas's `agent/src/data/models.ts` did not exist at scaffold time. Per the spec
 ## Team Update — 2026-05-26 M0 scaffold complete
 
 M0 delivered cohesively across 7 specialists: monorepo structure, backend TS scaffold, React web app, Bicep infra, tests with AC mapping, UX direction, and Constitution-voice documentation. All code installs, type-checks, and passes tests.
+
+---
+
+## SWA Deployment Infrastructure (2026-05-26)
+
+### GitHub Actions SPA deploy workflow
+
+Parker deployed `.github/workflows/deploy-web.yml` at 868bd67. SPA deploys are now automated on push to `feat-ai-decision-agent` or `main`.
+
+**Deployment flow:**
+- `ubuntu-latest` GitHub Actions runner (x86-64, bypasses ARM codespace blocker)
+- Builds Vite inside `advisor-agent/web/`
+- Deploys to Azure Static Web Apps via `Azure/static-web-apps-deploy@v1`
+- Environment variables (build-time) sourced from GitHub variables: `VITE_API_BASE_URL`, `VITE_ADVISOR_CLIENT_ID`, `VITE_ADVISOR_TENANT_ID`, `VITE_AZURE_REDIRECT_URI`
+- Deployment token (`AZURE_STATIC_WEB_APPS_API_TOKEN`) via GitHub secret
+
+**SPA Live Endpoint:**
+`https://polite-mushroom-0a09fa803.7.azurestaticapps.net`
+
+**First run:** 26479487737 (1m08s, ✅ success)
+
+**Implications for Lambert:**
+- No local SWA CLI deploy needed (x86-only binary problem solved)
+- Redirect URI for Entra is now `https://polite-mushroom-0a09fa803.7.azurestaticapps.net` (matches app registration)
+- Any push to `feat-ai-decision-agent` or `main` touching `advisor-agent/web/**` triggers auto-deploy
+- PR preview environments auto-generated (free tier max 10)
+- `VITE_API_BASE_URL` points to swedencentral Container App: `https://advisor-agent-app.wittysea-86254dbc.swedencentral.azurecontainerapps.io`
