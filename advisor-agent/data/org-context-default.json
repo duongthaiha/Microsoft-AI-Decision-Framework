@@ -1,0 +1,163 @@
+{
+  "_comment": "Default Organisation Context. Admins edit via the admin UI. This file is the seed for first-boot if Cosmos DB has no published version.",
+  "id": "org-context-default-v1",
+  "orgId": "default",
+  "version": "1.0.0",
+  "editorId": "system",
+  "editedAt": "2026-05-26T00:00:00Z",
+  "changeSummary": "Initial default org context — Microsoft 365 Copilot and Copilot Studio licensed organisation, limited pro-code capacity. Edit via admin UI.",
+  "published": true,
+  "systemInventory": [
+    {
+      "name": "Microsoft 365",
+      "vendor": "microsoft",
+      "category": "Productivity Suite",
+      "notes": "E3/E5 licensed. Includes Teams, SharePoint, Exchange, OneDrive.",
+      "isAuthoritativeFor": ["email", "calendar", "documents", "collaboration"]
+    },
+    {
+      "name": "Microsoft 365 Copilot",
+      "vendor": "microsoft",
+      "category": "End-user Copilot",
+      "notes": "Licensed for knowledge workers. Available in Word, Excel, PowerPoint, Teams, Outlook.",
+      "isAuthoritativeFor": ["document generation", "meeting summaries", "email drafting"]
+    },
+    {
+      "name": "Copilot Studio",
+      "vendor": "microsoft",
+      "category": "Low-code AI Agent Builder",
+      "notes": "Licensed. Power Platform environment provisioned.",
+      "isAuthoritativeFor": ["chatbots", "conversational agents", "power automate integration"]
+    },
+    {
+      "name": "Azure OpenAI Service",
+      "vendor": "microsoft",
+      "category": "AI Building Block",
+      "notes": "Provisioned in swedencentral. GPT-4.1-mini and text-embedding-3-small deployed.",
+      "isAuthoritativeFor": ["language model inference", "embeddings", "chat completions"]
+    },
+    {
+      "name": "Azure AI Search",
+      "vendor": "microsoft",
+      "category": "AI Building Block",
+      "notes": "Basic tier. system-inventory-v1 index provisioned.",
+      "isAuthoritativeFor": ["semantic search", "hybrid search", "vector search", "RAG"]
+    },
+    {
+      "name": "Azure Cosmos DB",
+      "vendor": "microsoft",
+      "category": "Database",
+      "notes": "NoSQL API. advisor database provisioned.",
+      "isAuthoritativeFor": ["session storage", "request storage", "org-wide data"]
+    },
+    {
+      "name": "SharePoint Online",
+      "vendor": "microsoft",
+      "category": "Content Platform",
+      "notes": "Part of M365. Can be grounded via Graph Connectors.",
+      "isAuthoritativeFor": ["document repository", "intranet", "knowledge base"]
+    },
+    {
+      "name": "Power Platform",
+      "vendor": "microsoft",
+      "category": "Low-code Platform",
+      "notes": "Power Automate, Power Apps, Power BI available.",
+      "isAuthoritativeFor": ["workflow automation", "business apps", "analytics dashboards"]
+    }
+  ],
+  "entitlements": [
+    {
+      "productId": "m365-copilot",
+      "displayName": "Microsoft 365 Copilot",
+      "status": "available",
+      "restrictionNotes": null,
+      "regions": ["global"]
+    },
+    {
+      "productId": "copilot-studio",
+      "displayName": "Copilot Studio",
+      "status": "available",
+      "restrictionNotes": null,
+      "regions": ["global"]
+    },
+    {
+      "productId": "azure-openai",
+      "displayName": "Azure OpenAI Service",
+      "status": "available",
+      "restrictionNotes": "Sweden Central region only. Request PTU via procurement if needed.",
+      "regions": ["swedencentral"]
+    },
+    {
+      "productId": "azure-ai-foundry",
+      "displayName": "Azure AI Foundry",
+      "status": "available-with-restrictions",
+      "restrictionNotes": "Approved for pro-code development teams only. Limited pro-code capacity — prioritise Copilot Studio first.",
+      "regions": ["swedencentral"]
+    },
+    {
+      "productId": "foundry-agent-service",
+      "displayName": "Microsoft Foundry Agent Service",
+      "status": "available-with-restrictions",
+      "restrictionNotes": "Preview — requires architecture review board approval before production use.",
+      "regions": ["swedencentral"]
+    },
+    {
+      "productId": "m365-agents-sdk",
+      "displayName": "M365 Agents SDK",
+      "status": "available",
+      "restrictionNotes": "Pro-code. Limited team capacity — assess skills before recommending.",
+      "regions": ["global"]
+    },
+    {
+      "productId": "security-copilot",
+      "displayName": "Security Copilot",
+      "status": "unavailable",
+      "restrictionNotes": "Not licensed. Route security use cases to the security team.",
+      "regions": []
+    },
+    {
+      "productId": "dynamics-365-copilot",
+      "displayName": "Dynamics 365 Copilots",
+      "status": "unavailable",
+      "restrictionNotes": "No Dynamics 365 licences. Route CRM use cases to the CRM team.",
+      "regions": []
+    }
+  ],
+  "customInstructions": [
+    {
+      "id": "ci-001",
+      "text": "Prefer Copilot Studio for conversational agents unless the use case requires pro-code control, multi-agent orchestration, or exceeds Copilot Studio's action limits. Document the reason if recommending pro-code.",
+      "kind": "preference",
+      "appliesTo": "phase-2",
+      "tags": ["build-style", "low-code-first"]
+    },
+    {
+      "id": "ci-002",
+      "text": "The organisation has limited pro-code capacity. If recommending M365 Agents SDK, Azure AI Foundry, or Foundry Agent Service, include a skills and resourcing risk in the readiness brief.",
+      "kind": "context-note",
+      "appliesTo": "phase-3",
+      "tags": ["skills", "capacity", "risk"]
+    },
+    {
+      "id": "ci-003",
+      "text": "All AI solutions processing personal data must include a data classification and privacy impact note in the readiness brief. GDPR compliance is mandatory.",
+      "kind": "hard-constraint",
+      "appliesTo": "both",
+      "tags": ["compliance", "gdpr", "privacy"]
+    },
+    {
+      "id": "ci-004",
+      "text": "When recommending Azure AI Search + AOAI for RAG, confirm whether SharePoint content is already indexed or if a new data pipeline is required. This is a common underestimated effort.",
+      "kind": "context-note",
+      "appliesTo": "phase-3",
+      "tags": ["data-strategy", "sharepoint", "rag"]
+    },
+    {
+      "id": "ci-005",
+      "text": "Microsoft 365 Copilot extensibility (Declarative Agents, Graph Connectors) should be considered before building a standalone chatbot when the use case involves M365 content or Teams users.",
+      "kind": "preference",
+      "appliesTo": "phase-2",
+      "tags": ["m365", "extensibility", "teams"]
+    }
+  ]
+}

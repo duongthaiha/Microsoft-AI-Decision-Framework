@@ -95,8 +95,8 @@ const stubRequestStore: IRequestStore = {
   createRequest: vi.fn(),
   getRequest: vi.fn(),
   updateRequest: vi.fn(),
-  submitRequest: vi.fn(),
-  listRequests: vi.fn(),
+  setStatusNew: vi.fn(),
+  listMyRequests: vi.fn(),
   listAllRequestsAdmin: vi.fn(),
 };
 
@@ -112,7 +112,14 @@ function createTestApp(): Application {
   app.use(express.json());
   // Mirror index.ts: jwtMiddleware in front of all protected route prefixes.
   app.use(['/v1', '/sessions', '/admin'], jwtMiddleware);
-  app.use('/', createResponsesAdapter({ sessionStore: stubSessionStore, requestStore: stubRequestStore }));
+  app.use('/', createResponsesAdapter({
+    sessionStore: stubSessionStore,
+    requestStore: stubRequestStore,
+    projectSearch: null,
+    aoaiClient: null,
+    aoaiDeployment: 'gpt-4.1-mini',
+    getOrgCtx: async () => null,
+  }));
   app.use('/admin', createAdminRouter());
   return app;
 }

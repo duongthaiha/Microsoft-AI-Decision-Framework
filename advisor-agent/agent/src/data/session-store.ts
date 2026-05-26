@@ -9,7 +9,8 @@
  * Microsoft Learn: https://learn.microsoft.com/azure/cosmos-db/nosql/
  */
 
-import { NotImplementedError } from "../errors.js";
+import { randomUUID } from "crypto";
+import type { CosmosClient, Database } from "@azure/cosmos";
 import type { Session, SessionTurn } from "./models.js";
 
 // ---------------------------------------------------------------------------
@@ -59,53 +60,144 @@ export interface ISessionStore {
 }
 
 // ---------------------------------------------------------------------------
-// Stub implementation
+// Live implementation
 // ---------------------------------------------------------------------------
 
+const DB_NAME = "advisor";
+const SESSIONS_CONTAINER = "sessions";
+const TURNS_CONTAINER = "turns";
+
 /**
- * Stub implementation — every method throws NotImplementedError.
+ * Live Cosmos DB implementation of ISessionStore.
  *
- * M1 will implement full Cosmos DB CRUD using the CosmosClient factory from
- * cosmos-client.ts.  Partition key /ownerId is used on every read and write so
- * Cosmos DB data-plane RBAC provides a second line of defence alongside
- * application-layer ownership checks (FR-019, FR-020).
+ * Constructor accepts a CosmosClient and ensures the database + containers
+ * exist on first call (idempotent createIfNotExists).
+ *
+ * Partition key /ownerId scopes every query to a single user partition,
+ * satisfying FR-019 (data isolation) without cross-partition overhead.
  */
 export class CosmosSessionStore implements ISessionStore {
-  createSession(_ownerId: string, _title: string): Promise<Session> {
-    // M1: create Session document in 'sessions' container, partition key /ownerId.
-    throw new NotImplementedError("CosmosSessionStore.createSession");
+  private readonly client: CosmosClient;
+  private dbPromise: Promise<Database> | null = null;
+
+  constructor(client: CosmosClient) {
+    this.client = client;
   }
 
-  getSession(_ownerId: string, _sessionId: string): Promise<Session | null> {
-    // M1: point-read by (sessionId, ownerId); ownership filter MUST use partition key /ownerId per FR-019, FR-020.
-    throw new NotImplementedError("CosmosSessionStore.getSession");
+  private async db(): Promise<Database> {
+    if (!this.dbPromise) {
+      this.dbPromise = this.ensureDb();
+    }
+    return this.dbPromise;
   }
 
-  listSessions(_ownerId: string): Promise<Session[]> {
-    // M1: query sessions container WHERE ownerId = :ownerId (partition-scoped); ownership filter MUST use partition key /ownerId per FR-019, FR-020.
-    throw new NotImplementedError("CosmosSessionStore.listSessions");
+  private async ensureDb(): Promise<Database> {
+    const { database } = await this.client.databases.createIfNotExists({ id: DB_NAME });
+    await database.containers.createIfNotExists({
+      id: SESSIONS_CONTAINER,
+      partitionKey: { paths: ["/ownerId"] },
+    });
+    await database.containers.createIfNotExists({
+      id: TURNS_CONTAINER,
+      partitionKey: { paths: ["/ownerId"] },
+    });
+    return database;
   }
 
-  renameSession(
-    _ownerId: string,
-    _sessionId: string,
-    _title: string
-  ): Promise<Session> {
-    // M1: patch title field; ownership filter MUST use partition key /ownerId per FR-019, FR-020.
-    throw new NotImplementedError("CosmosSessionStore.renameSession");
+  async createSession(ownerId: string, title: string): Promise<Session> {
+    const db = await this.db();
+    const now = new Date().toISOString();
+    const id = randomUUID();
+    const session: Session = {
+      id,
+      sessionId: id,
+      ownerId,
+      ownerType: ownerId.startsWith("demo::") ? "demo" : "entra",
+      title: title || "New Session",
+      status: "active",
+      createdAt: now,
+      lastActiveAt: now,
+      turnCount: 0,
+    };
+    const { resource } = await db.container(SESSIONS_CONTAINER).items.create(session);
+    return resource as Session;
   }
 
-  deleteSession(_ownerId: string, _sessionId: string): Promise<void> {
-    // M1: soft-delete (set status:'archived'); ownership filter MUST use partition key /ownerId per FR-019, FR-020.
-    throw new NotImplementedError("CosmosSessionStore.deleteSession");
+  async getSession(ownerId: string, sessionId: string): Promise<Session | null> {
+    const db = await this.db();
+    try {
+      const { resource } = await db
+        .container(SESSIONS_CONTAINER)
+        .item(sessionId, ownerId)
+        .read<Session>();
+      if (!resource || resource.ownerId !== ownerId) return null;
+      return resource;
+    } catch (err: unknown) {
+      if ((err as { code?: number }).code === 404) return null;
+      throw err;
+    }
   }
 
-  appendTurn(
-    _ownerId: string,
-    _sessionId: string,
-    _turn: Omit<SessionTurn, "sessionId" | "ownerId">
+  async listSessions(ownerId: string): Promise<Session[]> {
+    const db = await this.db();
+    const { resources } = await db
+      .container(SESSIONS_CONTAINER)
+      .items.query<Session>(
+        {
+          query: "SELECT * FROM c WHERE c.ownerId = @ownerId AND c.status != 'archived' ORDER BY c.lastActiveAt DESC",
+          parameters: [{ name: "@ownerId", value: ownerId }],
+        },
+        { partitionKey: ownerId }
+      )
+      .fetchAll();
+    return resources;
+  }
+
+  async renameSession(ownerId: string, sessionId: string, title: string): Promise<Session> {
+    const db = await this.db();
+    const existing = await this.getSession(ownerId, sessionId);
+    if (!existing) throw Object.assign(new Error("Session not found"), { code: 404 });
+    const updated: Session = { ...existing, title, lastActiveAt: new Date().toISOString() };
+    const { resource } = await db
+      .container(SESSIONS_CONTAINER)
+      .item(sessionId, ownerId)
+      .replace(updated);
+    return resource as Session;
+  }
+
+  async deleteSession(ownerId: string, sessionId: string): Promise<void> {
+    const db = await this.db();
+    const existing = await this.getSession(ownerId, sessionId);
+    if (!existing) throw Object.assign(new Error("Session not found"), { code: 404 });
+    const updated: Session = { ...existing, status: "archived", lastActiveAt: new Date().toISOString() };
+    await db.container(SESSIONS_CONTAINER).item(sessionId, ownerId).replace(updated);
+  }
+
+  async appendTurn(
+    ownerId: string,
+    sessionId: string,
+    turn: Omit<SessionTurn, "sessionId" | "ownerId">
   ): Promise<SessionTurn> {
-    // M1: upsert turn document; ownership filter MUST use partition key /ownerId per FR-019, FR-020.
-    throw new NotImplementedError("CosmosSessionStore.appendTurn");
+    const db = await this.db();
+    const now = new Date().toISOString();
+    const turnDoc: SessionTurn = {
+      ...turn,
+      sessionId,
+      ownerId,
+      timestamp: turn.timestamp || now,
+    };
+    await db.container(TURNS_CONTAINER).items.upsert({ ...turnDoc, id: turnDoc.turnId });
+
+    // Update session lastActiveAt and turnCount
+    const existing = await this.getSession(ownerId, sessionId);
+    if (existing) {
+      const updated: Session = {
+        ...existing,
+        lastActiveAt: now,
+        turnCount: (existing.turnCount || 0) + 1,
+      };
+      await db.container(SESSIONS_CONTAINER).item(sessionId, ownerId).replace(updated);
+    }
+    return turnDoc;
   }
 }

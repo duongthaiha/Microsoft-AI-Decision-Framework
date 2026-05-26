@@ -90,3 +90,44 @@ Agent identity has `Search Index Data Reader` (confirmed in `identity.bicep:95`)
 - Decision file: `.squad/decisions/inbox/ripley-search-index-schema-system-inventory.md`
 - Index JSON: `advisor-agent/data/system-inventory-v1-index.json` (Parker provisioning artifact)
 - M1 routing: Parker (P1–P3), Dallas (D1–D3)
+
+---
+
+## Framework Extraction & Schema-for-Prompt-Injection — 2026-05-26
+
+### Task: `framework-anchors.json` + `org-context-default.json`
+
+**What was done:** Extracted the Microsoft AI Decision Framework from GIT ROOT docs into `advisor-agent/data/framework-anchors.json` (the structured reference Dallas injects into the advisor's system prompt). Verified and preserved Dallas's existing `org-context-default.json` (it correctly matched the TypeScript `OrgContext` model and was richer than the spec's minimal template).
+
+### Framework Extraction Patterns
+
+1. **Source discipline.** Source docs (`docs/decision-framework.md`, `docs/capability-model.md`, `docs/evaluation-criteria.md`) are the authoritative truth. The JSON extracts from them — never invents. When two sources conflicted (e.g., task spec showed `version: 1` (integer) but TypeScript model shows `version: string`), the TypeScript model wins as the structural authority.
+
+2. **Canonical anchor products live in `.github/copilot-instructions.md`.** This file has the definitive G1–G5 anchor product lists (Teaching Anchors per the Constitution). The source docs have more narrative detail; the copilot-instructions list is the compact, verified canonical form.
+
+3. **What goes in JSON vs. what stays in docs.** The rule: structured criteria → JSON; narrative teaching devices → docs. Named mental models ("The Coin", "The Kitchen"), Mermaid diagrams, scenario examples, and implementation blueprints were deliberately excluded. They are too large for prompt tokens and survive better as docs the advisor cites by reference.
+
+4. **`groupingsAffected` per question enables skip logic.** Encoding which of G1–G5 each question affects allows Dallas to skip questions whose answers are already implied by intake or BXT (per spec §3 line 152). Without this field, the agent would have to embed that logic as hardcoded strings in agent code.
+
+5. **`answers` as arrays enable entitlement filtering.** Structured answer values (e.g., `"pro-code"`) let Dallas join Q2 answers against OrgContext entitlements at runtime — e.g., if Q2 answer is `"pro-code"` and `foundry: "available-with-restrictions"`, Dallas can surface the restriction note automatically without a string search.
+
+### Schema-for-Prompt-Injection Design Patterns
+
+1. **Load by phase, not whole file.** System prompt token budget is finite. The JSON is structured so Dallas loads only the relevant slice per framework phase: intake filter for Phase 0, BXT dimensions for Phase 1, nineQuestions + capabilityGroupings for Phase 2, decisionAnchors for Phase 3. Full injection is wasteful.
+
+2. **Scoring guides as single strings.** Keeps them prompt-injectable without parse overhead. Format is `"low: <criteria>; medium: <criteria>; high: <criteria>"` — direct interpolation into system prompt prose.
+
+3. **Decision anchors as string arrays.** Arrays of criteria strings are easy to filter (suppress items when relevant product is unavailable/restricted), easy to render as bullet lists in prompts, and easy to extend with future criteria without a schema change.
+
+4. **Single-field checkpoint text.** `doYouNeedAnAgentCheckpoint` is a paragraph string, not a structured object. It is read aloud to the user at the checkpoint step — verbatim prose injection is correct here. Don't over-structure content that is meant to be read, not computed.
+
+5. **Version the JSON independently from the source docs.** `framework-anchors.json` has its own `version` field. When source docs are updated in the GIT ROOT, Ripley bumps the JSON version and updates `lastUpdated`. Dallas's agent code can log the version used per session for traceability.
+
+6. **Never duplicate TypeScript model shapes in JSON data files.** When an existing file already matches the TS model correctly (as Dallas's `org-context-default.json` did), preserve it. The TS model is the structural authority; the spec's JSON snippet is illustrative, not prescriptive.
+
+### Deliverables
+
+- `advisor-agent/data/framework-anchors.json` (authoritative version, supersedes Dallas's M1 fallback stub)
+- `advisor-agent/data/org-context-default.json` (preserved from Dallas — correctly typed to TS model)
+- Decision file: `.squad/decisions/inbox/ripley-framework-anchors-and-default-org-context.md`
+- M1 routing: Dallas (D1: load framework-anchors.json into system prompt builder; D2: use org-context-default.json as first-boot seed)

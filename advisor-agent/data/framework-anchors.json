@@ -1,0 +1,190 @@
+{
+  "version": "1.0.0",
+  "lastUpdated": "2026-05-26",
+  "sourceDocs": [
+    "docs/decision-framework.md",
+    "docs/capability-model.md",
+    "docs/evaluation-criteria.md"
+  ],
+  "intakeFilter": {
+    "questions": [
+      {
+        "id": "outcome",
+        "prompt": "What business outcome are you trying to achieve? State the precise ROI or problem solved. If the outcome is unclear, pause and rewrite the problem statement before selecting any technology."
+      },
+      {
+        "id": "ux",
+        "prompt": "What user experience delivers that outcome? Is this immersive (the AI is the destination — users go to it to do their work), assistive (the AI travels with the user while they work), or embedded (the AI handles one specific thing inside an existing flow)?"
+      },
+      {
+        "id": "simplestTech",
+        "prompt": "Does a tool already exist? Check M365 Copilot or standard SaaS first. Start rigid (SaaS). Move to configuration (low-code) only if the standard tool fails. Move to construction (pro-code) only if configuration hits a wall. Do not start at custom build by default."
+      }
+    ],
+    "uxFraming": ["immersive", "assistive", "embedded"],
+    "doYouNeedAnAgentCheckpoint": "Not every AI problem needs an agent. Agents add nondeterminism, latency, and cost — reserve them for problems where multi-step reasoning, ambiguity resolution, or tool orchestration is genuinely required. Structured, predictable work belongs in deterministic code or non-generative AI. Static knowledge retrieval (single-turn Q&A from a fixed index with no tool execution or multi-step reasoning) belongs in classic RAG. Agentic coding tools have collapsed the cost of writing deterministic logic — an AI can scaffold a state machine in minutes, and the result runs faster, costs less per execution, and fails predictably. The anti-pattern is reaching for agentic orchestration to avoid writing code. Only proceed when you have confirmed that reasoning, tool-chaining, or ambiguity resolution adds irreplaceable value that deterministic code cannot provide. Source: CAF AI agent adoption guidance (https://learn.microsoft.com/en-us/azure/cloud-adoption-framework/ai-agents/business-strategy-plan#when-not-to-use-ai-agents)."
+  },
+  "bxt": {
+    "dimensions": [
+      {
+        "id": "viability",
+        "prompt": "Is there ROI beyond general productivity gains? Quantifiable cost savings or revenue increase? Strategic alignment? Favorable TCO vs. benefit analysis?",
+        "scoringGuide": "low: ROI unclear or speculative, no quantifiable outcome, weak strategic fit — shelve or reshape before proceeding; medium: identifiable ROI with assumptions, partial strategic alignment, TCO analysis incomplete — incubate or research further; high: quantifiable savings or revenue, clear strategic alignment, positive TCO — accelerate to MVP"
+      },
+      {
+        "id": "desirability",
+        "prompt": "Is there a motivating reason to use this over the current alternative? Does it solve a painful, frequent problem? Is measurable adoption realistic? Does it fit naturally into the user's workflow?",
+        "scoringGuide": "low: marginal improvement over current workflow, adoption uncertain, workflow disruption likely — revisit UX framing before proceeding; medium: solves real pain but adoption path unclear, partial workflow fit — prototype and validate with target users; high: painful and frequent problem, natural workflow fit, measurable adoption signal — proceed"
+      },
+      {
+        "id": "feasibility",
+        "prompt": "Does the current team have the required skills, or is there a credible hire/train/partner plan? Is the data accessible and governable? Is infrastructure and compliance ready?",
+        "scoringGuide": "low: significant skill gaps with no plan, data inaccessible or ungovernable, infrastructure or compliance blockers — pause and remediate before technology selection; medium: manageable gaps addressable via training or partners, data partially accessible — plan remediation in parallel with Phase 2; high: team skills sufficient, data accessible and governable, infrastructure and compliance ready — proceed to Phase 2"
+      }
+    ],
+    "confidenceLevels": ["low", "medium", "high"]
+  },
+  "nineQuestions": [
+    {
+      "id": "Q1",
+      "topic": "interaction-pattern",
+      "prompt": "Where will users or systems engage with this agent? In M365 apps (Teams, Outlook, Word, Excel — including the free Copilot Chat surface)? On a custom or multi-channel surface (web, mobile, SMS, email)? Or API/headless (a service calls the agent as a capability with no direct UI)?",
+      "answers": ["m365-apps", "custom-multi-channel", "api-headless"],
+      "groupingsAffected": ["G1-end-user-copilots", "G2-extensibility", "G3-build-ai-apps", "G4-ai-services"]
+    },
+    {
+      "id": "Q2",
+      "topic": "build-style",
+      "prompt": "What level of control and build effort is required? SaaS (configure, do not build — M365 Copilot, declarative agents)? Orchestration/low-code (assemble with managed infrastructure and a visual canvas — Copilot Studio)? Foundation/pro-code (own the kitchen — Foundry, M365 Agents SDK, Agent Framework)?",
+      "answers": ["saas", "low-code", "pro-code"],
+      "groupingsAffected": ["G1-end-user-copilots", "G2-extensibility", "G3-build-ai-apps", "G4-ai-services"]
+    },
+    {
+      "id": "Q3",
+      "topic": "data-strategy",
+      "prompt": "How will the agent get grounded, accurate answers? Grounding/RAG (retrieve per-request from Graph, AI Search, Cosmos DB, SQL databases, or OneLake)? Memory (persist conversation state or user context across turns)? Analytics (conversational queries over aggregated business data via Fabric Data Agents or Translytical Task Flows)?",
+      "answers": ["grounding-rag", "memory", "analytics"],
+      "groupingsAffected": ["G3-build-ai-apps", "G4-ai-services", "G5-specialized-agents"]
+    },
+    {
+      "id": "Q4",
+      "topic": "orchestration",
+      "prompt": "What is the orchestration complexity? Single agent/soloist (one agent using tools, good for simple Q&A or Tier 1–2 tasks)? Multi-agent/hub-and-spoke (a central orchestrator directs specialist workers within one boundary)? Connected mesh/Agent2Agent (independent agents across organizational or system boundaries discover and message each other)?",
+      "answers": ["single-agent", "multi-agent", "connected-mesh"],
+      "groupingsAffected": ["G2-extensibility", "G3-build-ai-apps", "G4-ai-services"]
+    },
+    {
+      "id": "Q5",
+      "topic": "governance",
+      "prompt": "Where does the data go and who can act on it? M365 trust boundary (prompts, responses, and Graph data remain inside the Microsoft 365 tenant — best for regulated orgs needing tenant certification guarantees)? Power Platform boundary (core data in-region but inherits compliance posture of every connector used)? Azure landing zone (customer-controlled subscription with VNet injection, private links, and customer-managed keys available by design)?",
+      "answers": ["m365-trust-boundary", "power-platform-boundary", "azure-landing-zone"],
+      "groupingsAffected": ["G1-end-user-copilots", "G2-extensibility", "G3-build-ai-apps", "G4-ai-services"]
+    },
+    {
+      "id": "Q6",
+      "topic": "scale-cost",
+      "prompt": "What is the usage pattern and budget model? Predictable/per-user (M365 Copilot add-on or Copilot Studio prepaid capacity packs)? Variable/metered with guardrails (Foundry/Foundry Agent Service pay-per-token or Copilot Studio PAYG — requires budget alerts and quota management)? Unified pre-purchase via Agent Pre-Purchase Plan/P3 (Agent Commit Units covering both Copilot Studio and Foundry in one pool)? Custom throttling (M365 Agents SDK or Agent Framework with self-managed auto-scaling)?",
+      "answers": ["predictable-per-user", "variable-metered", "unified-prepurchase", "custom-throttling"],
+      "groupingsAffected": ["G1-end-user-copilots", "G3-build-ai-apps", "G4-ai-services"]
+    },
+    {
+      "id": "Q7",
+      "topic": "action-safety",
+      "prompt": "Can the agent take destructive actions — modify data, delete records, transfer funds, change permissions? Draft-only (human always confirms before execution; M365 Copilot keeps humans in control by default)? Configurable execution (agent calls flows or APIs with explicit approval steps and audit coverage — Copilot Studio)? Autonomous execution (agent acts on tools directly with custom safety framework, guardrails, and human-in-the-loop checkpoints — Foundry, Foundry Agent Service, M365 Agents SDK)?",
+      "answers": ["draft-only", "configurable-execution", "autonomous-execution"],
+      "groupingsAffected": ["G1-end-user-copilots", "G3-build-ai-apps", "G4-ai-services"]
+    },
+    {
+      "id": "Q8",
+      "topic": "team-skills",
+      "prompt": "What is the delivery team composition? Makers/fusion (subject-matter experts, velocity focus, low-code canvas — Copilot Studio + AI Builder)? Professional developers (CI/CD, unit testing, version control, code-first — M365 Agents SDK, Foundry, Agent Framework)? AI/ML engineers (custom models, evals, data precision — Foundry, Azure ML)? Integration architects (enterprise workflows, connector governance — Logic Apps, API Management, Power Automate)?",
+      "answers": ["makers-fusion", "pro-developers", "ai-ml-engineers", "integration-architects"],
+      "groupingsAffected": ["G3-build-ai-apps", "G4-ai-services"]
+    },
+    {
+      "id": "Q9",
+      "topic": "proactive-vs-reactive",
+      "prompt": "Must the agent initiate actions without a user prompt? Reactive (agent waits for a user message — M365 Copilot, declarative agents; note M365 Copilot Cowork in Frontier Preview can sustain background execution with human checkpoints)? Proactive (agent responds to schedules, webhooks, database changes, or system alerts — requires custom engine orchestration, Logic Apps, Foundry Agent Service, or M365 Agents SDK event listeners; declarative agents are reactive by design)?",
+      "answers": ["reactive", "proactive"],
+      "groupingsAffected": ["G1-end-user-copilots", "G2-extensibility", "G3-build-ai-apps", "G4-ai-services"]
+    }
+  ],
+  "capabilityGroupings": [
+    {
+      "id": "G1-end-user-copilots",
+      "name": "End-user copilots",
+      "summary": "Ready-made AI experience surfaces — the chat UI, in-app assistants, and agent menus that users consume directly without custom build.",
+      "anchorProducts": ["M365 Copilot", "M365 Copilot Chat", "built-in agents", "Agent Store"],
+      "whenToUse": "User is already licensed for and working in M365 apps; outcome is achievable with Graph Connectors or declarative agent configuration rather than custom engine build; Tier 1 informational or Tier 2 transactional complexity; data must stay within the M365 trust boundary."
+    },
+    {
+      "id": "G2-extensibility",
+      "name": "Extensibility into existing copilots",
+      "summary": "Extend M365 Copilot with your organization's data and actions — without building or owning a new UX surface.",
+      "anchorProducts": ["Graph Connectors", "AI Plugins", "Declarative Agents"],
+      "whenToUse": "Users already live in M365 apps; you need to surface external content or trigger actions inside Copilot without owning the chat UI; low-code or declarative build path; single-agent soloist pattern is sufficient."
+    },
+    {
+      "id": "G3-build-ai-apps",
+      "name": "Build AI apps and agents",
+      "summary": "Custom AI experiences — from Copilot Studio low-code orchestration flows to Foundry pro-code multi-agent systems.",
+      "anchorProducts": ["Copilot Studio", "M365 Agents SDK", "Agent Framework", "Microsoft Foundry", "Foundry Agent Service"],
+      "whenToUse": "Custom experience required that G1/G2 cannot deliver; use Copilot Studio for low-code/managed orchestration (Tier 2), M365 Agents SDK for M365-hosted pro-code, Foundry or Foundry Agent Service for Azure-hosted custom models or Tier 3–4 multi-agent orchestration."
+    },
+    {
+      "id": "G4-ai-services",
+      "name": "AI services and building blocks",
+      "summary": "The raw models, retrieval, data, and governance components that sit beneath agents and apps as discrete composable services.",
+      "anchorProducts": ["Azure OpenAI", "Azure AI Search", "Document Intelligence", "Azure Logic Apps", "Cosmos DB", "Microsoft Fabric"],
+      "whenToUse": "Composing a custom solution that needs foundational AI capabilities — model inference, vector search, document extraction, workflow automation, data persistence, or analytical intelligence — as individually governed services wired together in G3."
+    },
+    {
+      "id": "G5-specialized-agents",
+      "name": "Specialized agents",
+      "summary": "Pre-built, domain-specific agents from Microsoft and partners — evaluate these before building an equivalent from G3/G4.",
+      "anchorProducts": ["GitHub Copilot", "Security Copilot", "Dynamics 365 Copilots", "Fabric Data Agents", "Azure SRE Agent"],
+      "whenToUse": "Use case falls squarely within an existing specialized domain — developer productivity, security operations, CRM/ERP, data analytics, or Azure site reliability; evaluate adopting or extending a specialized agent before commissioning a custom build."
+    }
+  ],
+  "decisionAnchors": {
+    "preferLowCodeWhen": [
+      "Delivery team is makers or fusion (subject-matter experts without full-stack dev skills)",
+      "Managed infrastructure preferred over owning deployment and CI/CD pipelines",
+      "No custom model fine-tuning, private networking, or VNet injection required",
+      "Time-to-market target is days to weeks (Copilot Studio canvas or templates)",
+      "Power Platform connectors cover the required integrations",
+      "Org custom instructions express limited pro-code engineering capacity"
+    ],
+    "preferProCodeWhen": [
+      "Professional dev team with CI/CD, unit testing, and version control discipline",
+      "Custom model fine-tuning or custom vector stores required",
+      "Azure landing zone required: VNet injection, private links, or customer-managed keys",
+      "Tier 3–4 complexity: multi-step planning, recursive self-correction, or multi-agent orchestration",
+      "Full lifecycle control and ALM rigor required",
+      "High-scale workloads (1M+ requests/day) requiring PTU or self-managed auto-scaling"
+    ],
+    "preferM365CopilotWhen": [
+      "Users are M365-licensed and work primarily in Teams, Outlook, or Office apps",
+      "Outcome is achievable with Graph-grounded Q&A or in-app copilot assistance (Tier 1–2)",
+      "Data must remain strictly within the M365 tenant trust boundary",
+      "Zero custom engine overhead — configure Graph Connectors or declarative agents",
+      "Fastest time-to-value required: days, no infrastructure to deploy"
+    ],
+    "preferCopilotStudioWhen": [
+      "Custom conversational flows or multi-channel bots needed beyond built-in M365 surfaces",
+      "Tier 2 transactional workflows: linear if/then logic with defined API calls and approval steps",
+      "Makers or fusion team building with visual canvas and Power Platform connectors",
+      "Managed infrastructure preferred; no Azure landing zone setup required",
+      "Predictable spend via Copilot Studio prepaid capacity packs or PAYG metering",
+      "Better Together architecture: Copilot Studio front office + Foundry engine room"
+    ],
+    "preferFoundryWhen": [
+      "Tier 3 reasoning or Tier 4 autonomous complexity: multi-step planning, nondeterministic orchestration, recursive multi-agent",
+      "Custom model fine-tuning, custom vector stores, or advanced evaluation pipelines required",
+      "Azure landing zone required: private networking, VNet, CMK, or full subscription control",
+      "High-volume B2C or automation workloads best served by pay-per-token metered consumption",
+      "Pro-code team with DevOps maturity to own deployment, scaling, and observability",
+      "Multi-agent connected mesh or Agent2Agent patterns across organizational boundaries"
+    ]
+  }
+}
