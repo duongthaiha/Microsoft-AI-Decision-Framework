@@ -50,3 +50,36 @@ Parker deployed `.github/workflows/deploy-web.yml` at 868bd67. SPA deploys are n
 - Any push to `feat-ai-decision-agent` or `main` touching `advisor-agent/web/**` triggers auto-deploy
 - PR preview environments auto-generated (free tier max 10)
 - `VITE_API_BASE_URL` points to swedencentral Container App: `https://advisor-agent-app.wittysea-86254dbc.swedencentral.azurecontainerapps.io`
+
+---
+
+## M1 — MSAL Sign-in Wired (2026-05-26T22:52:00Z)
+
+### MSAL v3 patterns
+
+- **`@azure/msal-browser` 3.x** changed the `PublicClientApplication` constructor to `async`-first: `initialize()` must be called before use in pure JS, but `MsalProvider` handles this automatically when you pass the instance at construction time. No manual `await msalInstance.initialize()` needed when using `@azure/msal-react`.
+- **`acquireTokenSilent`** requires an explicit `account` parameter in v3 (unlike v2 where it could be inferred). Always pass `accounts[0]` or the active account.
+- **`InteractionRequiredAuthError`** is exported from `@azure/msal-browser` (not `@azure/msal-react`). Import it from the browser package. Use it as the fallback guard before `acquireTokenPopup`.
+
+### Token caching
+
+- `cacheLocation: 'sessionStorage'` is the safe default for internal tools. `localStorage` survives tab close and can be read by other tabs — unacceptable for Bearer tokens on admin endpoints.
+- `storeAuthStateInCookie: false` prevents 3rd-party cookie issues in sandboxed envs (Codespaces, iframes).
+- Apply `sessionStorage` to **both** real and demo configs for consistency — demo mode stubs the config but the browser still allocates the cache location.
+
+### Redirect URI gotchas
+
+- `window.location.origin` silently breaks when the app is served from a sub-path or when the Entra app registration has a specific URI registered. Always use the explicit `VITE_AZURE_REDIRECT_URI` env var so the value is deterministic in CI.
+- Both `http://localhost:5173` and `https://polite-mushroom-0a09fa803.7.azurestaticapps.net` must be registered as redirect URIs in the Entra app — the SPA flow uses hash/PKCE and the Entra portal entry must be type "Single-page application" (not "Web").
+- If you see `AADSTS50011` (redirect URI mismatch), the most common cause is `window.location.origin` resolving to a port or path not registered in the app registration.
+
+### Popup vs redirect
+
+- Popup (`loginPopup`) preserves SPA router state and avoids URL fragment collisions on redirect. Preferred for development and internal tools.
+- Redirect (`loginRedirect`) is better for accessibility (screen readers) and for environments that block popups. Switch in `RequireAuth.tsx` is a one-liner.
+- `logoutPopup` is preferred over `logoutRedirect` for the same reasons — it avoids blanking the page.
+
+### SWA deploy
+
+- The SWA GitHub Actions deploy workflow (`deploy-web.yml`) triggers on any push to `feat-ai-decision-agent` touching `advisor-agent/web/**`. No manual deploy step needed.
+- Build-time env vars (`VITE_*`) are passed from GitHub Actions variables, not from `.env.local`. Always verify GitHub variable values match `.env.local` for local parity.
