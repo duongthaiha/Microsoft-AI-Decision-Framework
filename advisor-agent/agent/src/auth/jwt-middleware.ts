@@ -110,6 +110,14 @@ export async function jwtMiddleware(
   res: Response,
   next: NextFunction
 ): Promise<void> {
+  // W3C CORS spec: browsers send OPTIONS preflight WITHOUT an Authorization header.
+  // The CORS middleware (mounted before this) handles preflights; belt-and-braces
+  // here ensures ordering regressions never cause a 401 on OPTIONS.
+  if (req.method === "OPTIONS") {
+    next();
+    return;
+  }
+
   // Demo mode — bypass JWT; identity is the opaque demo id.
   if (process.env.ADVISOR_DEMO_MODE === "true") {
     req.user = { oid: "demo::anonymous", roles: [] };

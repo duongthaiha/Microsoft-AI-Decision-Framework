@@ -48,6 +48,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import supertest from 'supertest';
 import express, { type Application } from 'express';
+import cors from 'cors';
 import * as jose from 'jose';
 import { createResponsesAdapter } from '../adapter/responses.js';
 import { createAdminRouter } from '../admin/admin-api.js';
@@ -111,6 +112,34 @@ function createTestApp(): Application {
   const app = express();
   app.use(express.json());
   // Mirror index.ts: jwtMiddleware in front of all protected route prefixes.
+  app.use(['/v1', '/sessions', '/admin'], jwtMiddleware);
+  app.use('/', createResponsesAdapter({
+    sessionStore: stubSessionStore,
+    requestStore: stubRequestStore,
+    projectSearch: null,
+    aoaiClient: null,
+    aoaiDeployment: 'gpt-4.1-mini',
+    getOrgCtx: async () => null,
+  }));
+  app.use('/admin', createAdminRouter());
+  return app;
+}
+
+/**
+ * Same as createTestApp but with cors() mounted BEFORE jwtMiddleware, mirroring
+ * the production index.ts CORS setup.  Used by the preflight contract tests.
+ */
+function createTestAppWithCors(): Application {
+  const app = express();
+  app.use(express.json());
+  const origins = (process.env.ADVISOR_ALLOWED_ORIGINS ?? '')
+    .split(',').map((o) => o.trim()).filter(Boolean);
+  app.use(cors({
+    origin: origins.length > 0 ? origins : ['http://localhost:5173'],
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Authorization', 'Content-Type'],
+  }));
   app.use(['/v1', '/sessions', '/admin'], jwtMiddleware);
   app.use('/', createResponsesAdapter({
     sessionStore: stubSessionStore,
@@ -422,3 +451,51 @@ describe('Auth contract — /admin/* (AdvisorAdmin role gate)', () => {
 // middleware unit tests to ensure he validates the same values.
 // ---------------------------------------------------------------------------
 export { TENANT_ID, AUDIENCE, ISSUER, SCOPE_CLAIM, ADMIN_ROLE };
+
+// ---------------------------------------------------------------------------
+// CORS preflight contract — ensures OPTIONS requests are never blocked by the
+// JWT middleware.  Browsers do NOT send Authorization on preflight (W3C spec).
+// If this test fails, the SPA shows "Failed to fetch" before any request lands.
+// ---------------------------------------------------------------------------
+
+const SWA_ORIGIN = 'https://polite-mushroom-0a09fa803.7.azurestaticapps.net';
+
+describe('CORS preflight contract — OPTIONS /v1/responses', () => {
+  let app: ReturnType<typeof createTestApp>;
+
+  beforeEach(() => {
+    // Build a fresh app that also mounts cors() before jwtMiddleware, mirroring
+    // the production index.ts setup (ADVISOR_ALLOWED_ORIGINS env var).
+    process.env.ADVISOR_ALLOWED_ORIGINS = SWA_ORIGIN;
+    app = createTestAppWithCors();
+  });
+
+  afterEach(() => {
+    delete process.env.ADVISOR_ALLOWED_ORIGINS;
+  });
+
+  it('Test 12: OPTIONS preflight from SWA origin → 2xx with Access-Control-Allow-Origin (no auth required)', async () => {
+    // Browsers send OPTIONS preflight without Authorization.
+    // The middleware MUST respond with CORS headers and a 2xx — never 401.
+    const res = await supertest(app)
+      .options('/v1/responses')
+      .set('Origin', SWA_ORIGIN)
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'authorization,content-type');
+
+    expect(res.status).toBeGreaterThanOrEqual(200);
+    expect(res.status).toBeLessThan(300);
+    expect(res.headers['access-control-allow-origin']).toBe(SWA_ORIGIN);
+  });
+
+  it('Test 13: OPTIONS preflight from unlisted origin → no CORS header (origin blocked)', async () => {
+    const res = await supertest(app)
+      .options('/v1/responses')
+      .set('Origin', 'https://evil.example.com')
+      .set('Access-Control-Request-Method', 'POST')
+      .set('Access-Control-Request-Headers', 'authorization,content-type');
+
+    // cors() omits Access-Control-Allow-Origin for unlisted origins.
+    expect(res.headers['access-control-allow-origin']).toBeUndefined();
+  });
+});

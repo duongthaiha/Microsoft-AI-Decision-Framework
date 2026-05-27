@@ -150,3 +150,25 @@ Entra app registration now live (parker-4 phase 1 complete). Frontend will reque
 
 **Team update:** M1 reasoning loop deployed to revision `advisor-agent-app--azd-1779839176`. See decision #264 `dallas-m1-reasoning-loop` for full details. Key blockers for M2: Cosmos RBAC confirmation (Parker), and 502 error contract fix (proactive gap from Brett's Test 7).
 
+---
+
+## Learnings
+
+### 2026-05-27 — CORS Preflight + JWT Ordering (Dallas)
+
+**The invariant:** CORS middleware MUST be mounted BEFORE any authentication middleware in Express. This is non-negotiable.
+
+**Why:** The W3C Fetch Standard (§3.2) requires browsers to send an HTTP `OPTIONS` preflight request **without** an `Authorization` header before any credentialed cross-origin request. If JWT middleware runs first and returns `401` on the preflight (because there is no token), the browser never sends the real request. The SPA shows "Failed to fetch" even though the backend is healthy.
+
+**The fix — three layers:**
+1. `app.use(cors({ origin: allowedOrigins, credentials: true, ... }))` mounted **before** `app.use(['/v1', ...], jwtMiddleware)`.
+2. Belt-and-braces in `jwtMiddleware`: `if (req.method === 'OPTIONS') { next(); return; }` at the very top, so ordering regressions never silently break the SPA.
+3. Origin allowlist driven by `ADVISOR_ALLOWED_ORIGINS` env var (comma-separated) — never `origin: '*'` (incompatible with `credentials: true`).
+
+**The footgun:** This bit us as a P0 regression (2026-05-27). M1 auth wiring added `jwtMiddleware` correctly but no CORS middleware existed — the middleware stack was incomplete. Any Express API with a browser SPA client needs CORS from day one.
+
+**Brett action:** Every protected route prefix should have a preflight contract test asserting HTTP 2xx + `Access-Control-Allow-Origin`. See `auth-contract.test.ts` Tests 12–13 as the template.
+
+**Skill:** `.squad/skills/cors-preflight-with-jwt/SKILL.md`  
+**Decision:** `.squad/decisions/inbox/dallas-cors-preflight-fix.md`  
+**Deployed revision:** `advisor-agent-app--azd-1779864726`

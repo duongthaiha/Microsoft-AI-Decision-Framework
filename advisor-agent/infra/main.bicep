@@ -37,6 +37,9 @@ param entraTenantId string = 'cdfe81b5-821e-4f07-9ea7-516efc8497e4'
 @description('Entra API audience (api://{appId}) — must match the audience claim on tokens.')
 param entraApiAudience string = 'api://4f4f4a4d-e60f-4b86-a681-86059aae4597'
 
+@description('Comma-separated list of allowed CORS origins for the backend. Defaults to the deployed SWA origin.')
+param allowedOrigins string = 'https://polite-mushroom-0a09fa803.7.azurestaticapps.net'
+
 @description('Copilot SDK model path: "azure-byom" (preferred) or "github-default" (requires Key Vault token).')
 @allowed(['azure-byom', 'github-default'])
 param modelPath string = 'azure-byom'
@@ -156,6 +159,7 @@ module containerApps 'modules/container-apps.bicep' = {
     demoMode: demoFlag
     entraTenantId: entraTenantId
     entraApiAudience: entraApiAudience
+    allowedOrigins: allowedOrigins
   }
 }
 

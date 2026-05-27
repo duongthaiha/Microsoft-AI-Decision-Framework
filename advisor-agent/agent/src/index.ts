@@ -8,21 +8,23 @@
  * so secrets never land on disk.
  *
  * Environment variables:
- *   PORT                  — HTTP port (default: 8080)
- *   COSMOS_ENDPOINT       — Cosmos DB account endpoint URL
- *   SEARCH_ENDPOINT       — Azure AI Search endpoint URL
- *   AOAI_ENDPOINT         — Azure OpenAI endpoint URL
- *   AOAI_MODEL_DEPLOYMENT — GPT model deployment name (default: gpt-4.1-mini)
- *   ADVISOR_LOCAL_DEV     — 'true' enables DefaultAzureCredential fallback
- *   ADVISOR_DEMO_MODE     — 'true' disables Entra sign-in for demo environments
- *   ENTRA_TENANT_ID       — Entra tenant ID (default: cdfe81b5-821e-4f07-9ea7-516efc8497e4)
- *   ENTRA_API_AUDIENCE    — Full api:// audience URI (default: api://4f4f4a4d-e60f-4b86-a681-86059aae4597)
+ *   PORT                    — HTTP port (default: 8080)
+ *   COSMOS_ENDPOINT         — Cosmos DB account endpoint URL
+ *   SEARCH_ENDPOINT         — Azure AI Search endpoint URL
+ *   AOAI_ENDPOINT           — Azure OpenAI endpoint URL
+ *   AOAI_MODEL_DEPLOYMENT   — GPT model deployment name (default: gpt-4.1-mini)
+ *   ADVISOR_LOCAL_DEV       — 'true' enables DefaultAzureCredential fallback
+ *   ADVISOR_DEMO_MODE       — 'true' disables Entra sign-in for demo environments
+ *   ENTRA_TENANT_ID         — Entra tenant ID (default: cdfe81b5-821e-4f07-9ea7-516efc8497e4)
+ *   ENTRA_API_AUDIENCE      — Full api:// audience URI (default: api://4f4f4a4d-e60f-4b86-a681-86059aae4597)
+ *   ADVISOR_ALLOWED_ORIGINS — Comma-separated CORS allowlist (default: SWA origin + localhost:5173)
  *
  * Microsoft Learn — Foundry Hosted Agent runtime:
  * https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents
  */
 
 import express from "express";
+import cors from "cors";
 import { existsSync, readFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
@@ -40,6 +42,29 @@ import type { OrgContext } from "./data/models.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(express.json());
+
+// ---------------------------------------------------------------------------
+// CORS — MUST be mounted BEFORE jwtMiddleware.
+// Browsers send OPTIONS preflight without Authorization; the JWT middleware
+// must never see those requests or it returns 401, blocking the SPA entirely.
+// ADVISOR_ALLOWED_ORIGINS is a comma-separated allowlist injected at deploy time.
+// ---------------------------------------------------------------------------
+const DEFAULT_ORIGINS = [
+  "https://polite-mushroom-0a09fa803.7.azurestaticapps.net",
+  "http://localhost:5173",
+];
+const allowedOrigins: string[] = (process.env.ADVISOR_ALLOWED_ORIGINS ?? "")
+  .split(",")
+  .map((o) => o.trim())
+  .filter(Boolean);
+const corsOrigins = allowedOrigins.length > 0 ? allowedOrigins : DEFAULT_ORIGINS;
+
+app.use(cors({
+  origin: corsOrigins,
+  credentials: true,
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Authorization", "Content-Type"],
+}));
 
 // ---------------------------------------------------------------------------
 // Live dependency wiring

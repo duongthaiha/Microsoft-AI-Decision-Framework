@@ -52,6 +52,9 @@ param entraTenantId string = ''
 @description('Entra API audience (api://{appId}) for JWT validation.')
 param entraApiAudience string = ''
 
+@description('Comma-separated list of allowed CORS origins (e.g. SWA URL). Injected as ADVISOR_ALLOWED_ORIGINS.')
+param allowedOrigins string = ''
+
 // ---------------------------------------------------------------------------
 // Container Apps Environment (Consumption plan — pay-per-use)
 // ---------------------------------------------------------------------------
@@ -139,6 +142,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             {
               name: 'ENTRA_API_AUDIENCE'
               value: entraApiAudience
+            }
+            {
+              name: 'ADVISOR_ALLOWED_ORIGINS'
+              value: allowedOrigins
             }
             {
               name: 'NODE_ENV'
