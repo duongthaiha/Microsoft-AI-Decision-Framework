@@ -38,6 +38,7 @@ import type {
   SimilarProjectMatch,
   ReuseGateDecision,
   ReadinessBrief,
+  AdvisorAssumption,
 } from "../data/models.js";
 import type { IProjectSearch } from "../search/project-index.js";
 
@@ -214,6 +215,7 @@ export interface AdvisorLoopResult {
   searchMatches?: SimilarProjectMatch[];
   reuseDecision?: ReuseGateDecision;
   readinessBrief?: ReadinessBrief;
+  assumptions: AdvisorAssumption[];
   orgContextVersion: string;
   /** Accumulated AOAI token usage across all loop iterations (non-streaming only). */
   tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number };
@@ -229,12 +231,123 @@ export interface SSELoopEvent {
 }
 
 // ---------------------------------------------------------------------------
+// Best-guess inference helpers
+// ---------------------------------------------------------------------------
+
+function inferBestGuessAssumptions(orgCtx: OrgContext | null): AdvisorAssumption[] {
+  const assumptions: AdvisorAssumption[] = [];
+
+  if (orgCtx) {
+    const availableProducts = orgCtx.entitlements
+      .filter((e) => e.status !== "unavailable")
+      .map((e) => e.displayName)
+      .join(", ");
+    const approvedRegions = [...new Set(orgCtx.entitlements.flatMap((e) => e.regions ?? []))].join(", ");
+    const authoritativeSources = orgCtx.systemInventory
+      .filter((s) => s.isAuthoritativeFor.length > 0)
+      .slice(0, 5)
+      .map((s) => `${s.name} (${s.isAuthoritativeFor.join(", ")})`)
+      .join("; ");
+    const instructionText = orgCtx.customInstructions.map((ci) => ci.text).join(" ").toLowerCase();
+    const lowCodeInstruction = orgCtx.customInstructions.find((ci) =>
+      ci.tags?.some((tag) => ["low-code-first", "build-style", "capacity"].includes(tag)) ||
+      ci.text.toLowerCase().includes("copilot studio") ||
+      ci.text.toLowerCase().includes("limited pro-code")
+    );
+    const complianceInstruction = orgCtx.customInstructions.find((ci) =>
+      ci.kind === "hard-constraint" || ci.tags?.some((tag) => ["compliance", "privacy", "gdpr"].includes(tag))
+    );
+
+    assumptions.push(
+      {
+        field: "primaryCloud",
+        value: "Microsoft/Azure-first deployment using approved Microsoft entitlements.",
+        source: "org-context",
+      },
+      {
+        field: "preferredTechnology",
+        value: availableProducts || "Use currently available Microsoft AI products before proposing new procurement.",
+        source: "org-context",
+      },
+      {
+        field: "Q2BuildStyle",
+        value: lowCodeInstruction
+          ? lowCodeInstruction.text
+          : "Prefer managed Microsoft platforms and low-code paths when they satisfy the requirement.",
+        source: "org-context",
+      },
+      {
+        field: "Q3DataStrategy",
+        value: authoritativeSources || "Reuse organisation-approved systems as grounding sources before creating new data stores.",
+        source: "org-context",
+      },
+      {
+        field: "Q5Compliance",
+        value: complianceInstruction
+          ? complianceInstruction.text
+          : `Use the published org-context compliance posture${approvedRegions ? ` and approved regions: ${approvedRegions}` : ""}.`,
+        source: "org-context",
+      },
+      {
+        field: "Q8TeamSkills",
+        value: instructionText.includes("limited pro-code")
+          ? "Limited pro-code capacity; prefer makers/fusion or low-code delivery unless pro-code is clearly justified."
+          : "Assume the team should use skills implied by the preferred platforms in org-context.",
+        source: "org-context",
+      }
+    );
+  }
+
+  assumptions.push(
+    {
+      field: "Q1UserInteraction",
+      value: "Use the intake's target users and workflow to choose the user surface; default to the least disruptive Microsoft surface.",
+      source: "default",
+    },
+    {
+      field: "Q4OrchestrationComplexity",
+      value: "Start with a single-agent/soloist pattern unless the intake clearly requires multi-agent orchestration.",
+      source: "default",
+    },
+    {
+      field: "Q6ScaleAndCost",
+      value: "Assume MVP-scale usage with budget alerts and revisit capacity after pilot telemetry.",
+      source: "default",
+    },
+    {
+      field: "Q7ActionSafety",
+      value: "Default to draft-only or human-approved actions for write operations.",
+      source: "default",
+    },
+    {
+      field: "Q9ProactiveVsReactive",
+      value: "Default to reactive user-initiated interaction unless the intake explicitly mentions schedules, events, or background triggers.",
+      source: "default",
+    }
+  );
+
+  return assumptions;
+}
+
+function formatAssumptionsForPrompt(assumptions: AdvisorAssumption[]): string {
+  return assumptions.map((a) => `- ${a.field}: ${a.value} (source: ${a.source})`).join("\n");
+}
+
+function appendAssumptionsToText(text: string, assumptions: AdvisorAssumption[]): string {
+  if (!assumptions.length || text.includes("Assumed:")) return text;
+  const lines = assumptions.map((a) => `- ${a.field}: ${a.value} [${a.source}]`).join("\n");
+  return `${text}\n\nAssumed:\n${lines}`;
+}
+
+// ---------------------------------------------------------------------------
 // System prompt builder
 // ---------------------------------------------------------------------------
 
 function buildSystemPrompt(
   orgCtx: OrgContext | null,
-  frameworkAnchors: Record<string, unknown>
+  frameworkAnchors: Record<string, unknown>,
+  bestGuessMode: boolean,
+  assumptions: AdvisorAssumption[]
 ): string {
   const orgSection = orgCtx
     ? `
@@ -261,9 +374,25 @@ ${JSON.stringify(frameworkAnchors.bxt, null, 2)}
   const questionsSection = Array.isArray(frameworkAnchors.nineQuestions)
     ? `
 ## The 9 Critical Questions
-${(frameworkAnchors.nineQuestions as Array<{ id: string; label: string; description: string }>)
-  .map((q) => `${q.id}. **${q.label}**: ${q.description}`)
+${(frameworkAnchors.nineQuestions as Array<{ id: string; label?: string; topic?: string; description?: string; prompt?: string }>)
+  .map((q) => `${q.id}. **${q.label ?? q.topic ?? "Question"}**: ${q.description ?? q.prompt ?? ""}`)
   .join("\n")}
+`
+    : "";
+
+  const bestGuessSection = bestGuessMode
+    ? `
+## Best-Guess Mode
+The user explicitly enabled best-guess mode for this request. Do not block on clarifying questions when a reasonable answer can be inferred or assumed.
+
+Use these pre-filled answers as working context:
+${formatAssumptionsForPrompt(assumptions)}
+
+Question reduction rules:
+- Skip 9-question prompts already covered by the pre-filled answers above.
+- If a remaining detail is missing, make the safest reasonable default assumption instead of asking a blocking question.
+- Surface every inferred/defaulted answer in the final recommendation under an "Assumed:" section so the user can correct it in a follow-up turn.
+- The user can override any assumption later; treat follow-up corrections as higher priority than the assumption list.
 `
     : "";
 
@@ -275,7 +404,7 @@ Your role is to help business users make evidence-based decisions about which Mi
 Follow this exact sequence:
 
 **Phase 1 — Intake & Clarification**
-1. Review the provided intake fields. If businessOutcome, targetUsers, or desiredBehavior are vague or missing, ask targeted clarification questions (max 3 at once). Do NOT proceed to BXT until you have enough signal.
+1. Review the provided intake fields. If businessOutcome, targetUsers, or desiredBehavior are vague or missing, ask targeted clarification questions (max 3 at once). Do NOT proceed to BXT until you have enough signal. If best-guess mode is enabled, prefer inferred/defaulted answers over blocking clarification.
 
 **Phase 1 — BXT Assessment**  
 2. Once intake is clear, call the \`scoreBXT\` tool with numeric scores (0-10 each for viability, desirability, feasibility) and a plain-English rationale. A composite score below 15/30 is an early exit — tell the user to revisit the business case.
@@ -284,7 +413,7 @@ Follow this exact sequence:
 3. Call \`searchSimilarProjects\` with a synthesised query. If matches exist with score >= 0.5, present the top 3 to the user and ask whether to link to an existing project. Then call \`recordReuseDecision\`.
 
 **Phase 2 — 9 Questions**
-4. Walk through the 9 critical questions. Ask 2-3 at a time if the intake doesn't already answer them. Build your technology groupings shortlist as answers accumulate.
+4. Walk through the 9 critical questions. Ask 2-3 at a time if the intake doesn't already answer them. In best-guess mode, skip questions covered by inferred/defaulted answers and continue toward a recommendation.
 
 **Phase 3 — Readiness Brief**
 5. When you have enough signal (all 9 questions answered or confidently inferred), call \`produceReadinessBrief\` with the full recommendation.
@@ -301,6 +430,7 @@ Follow this exact sequence:
 - ALWAYS flag \`hard-constraint\` custom instructions if they affect the recommendation.
 - ALWAYS call \`produceReadinessBrief\` as the final tool call before ending the conversation.
 ${orgSection}
+${bestGuessSection}
 ${bxtSection}
 ${questionsSection}`;
 }
@@ -314,6 +444,7 @@ export interface AdvisorLoopDeps {
   deployment: string;
   projectSearch: IProjectSearch | null;
   orgCtx: OrgContext | null;
+  bestGuessMode?: boolean;
   /** Optional SSE callback — when present, model calls use streaming and emit text.delta events. */
   onEvent?: (event: SSELoopEvent) => void;
 }
@@ -324,8 +455,10 @@ export async function runAdvisorLoop(
   deps: AdvisorLoopDeps
 ): Promise<AdvisorLoopResult> {
   const frameworkAnchors = loadJson("framework-anchors.json", {});
+  const bestGuessMode = deps.bestGuessMode === true;
+  const assumptions = bestGuessMode ? inferBestGuessAssumptions(deps.orgCtx) : [];
 
-  const systemPrompt = buildSystemPrompt(deps.orgCtx, frameworkAnchors);
+  const systemPrompt = buildSystemPrompt(deps.orgCtx, frameworkAnchors, bestGuessMode, assumptions);
 
   // Build initial user message from intake fields
   const intakeMessage = formatIntakeMessage(intake);
@@ -338,6 +471,7 @@ export async function runAdvisorLoop(
 
   const result: AdvisorLoopResult = {
     assistantText: "",
+    assumptions,
     orgContextVersion: deps.orgCtx?.version ?? "none",
     tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
   };
@@ -367,7 +501,7 @@ export async function runAdvisorLoop(
 
     // If no tool calls, this is the final text response
     if (!assistantToolCalls || assistantToolCalls.length === 0) {
-      result.assistantText = content ?? "";
+      result.assistantText = appendAssumptionsToText(content ?? "", result.assumptions);
       break;
     }
 
@@ -533,6 +667,7 @@ async function dispatchTool(
         alignmentNotes: [],
         risks: a.risks,
         nextActions: a.nextActions,
+        assumptions: result.assumptions,
         orgContextVersion: result.orgContextVersion,
         generatedAt: new Date().toISOString(),
       };

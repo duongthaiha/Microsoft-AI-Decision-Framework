@@ -290,6 +290,70 @@ const CANNED_INTAKE = {
   },
 };
 
+const TEST_ORG_CONTEXT: OrgContext = {
+  id: 'org-context-test-v2',
+  orgId: 'default',
+  version: '2.0.0',
+  editorId: 'admin-test',
+  editedAt: '2026-05-27T12:25:46Z',
+  changeSummary: 'Test context for best-guess mode',
+  published: true,
+  systemInventory: [
+    {
+      name: 'Microsoft 365',
+      vendor: 'microsoft',
+      category: 'Productivity Suite',
+      notes: 'Knowledge workers live in Teams and SharePoint.',
+      isAuthoritativeFor: ['documents', 'collaboration'],
+    },
+    {
+      name: 'Azure AI Search',
+      vendor: 'microsoft',
+      category: 'AI Building Block',
+      notes: 'Approved search service.',
+      isAuthoritativeFor: ['semantic search', 'RAG'],
+    },
+  ],
+  entitlements: [
+    {
+      productId: 'copilot-studio',
+      displayName: 'Copilot Studio',
+      status: 'available',
+      regions: ['global'],
+    },
+    {
+      productId: 'azure-ai-foundry',
+      displayName: 'Azure AI Foundry',
+      status: 'available-with-restrictions',
+      restrictionNotes: 'Architecture review required.',
+      regions: ['swedencentral'],
+    },
+    {
+      productId: 'security-copilot',
+      displayName: 'Security Copilot',
+      status: 'unavailable',
+      restrictionNotes: 'Not licensed.',
+      regions: [],
+    },
+  ],
+  customInstructions: [
+    {
+      id: 'ci-low-code',
+      text: 'Prefer Copilot Studio when low-code is viable; engineering capacity is limited.',
+      kind: 'preference',
+      appliesTo: 'phase-2',
+      tags: ['build-style', 'low-code-first'],
+    },
+    {
+      id: 'ci-gdpr',
+      text: 'GDPR compliance is mandatory for personal data.',
+      kind: 'hard-constraint',
+      appliesTo: 'both',
+      tags: ['compliance', 'gdpr'],
+    },
+  ],
+};
+
 // ============================================================================
 // SUITE 1 — POST /sessions
 // ============================================================================
@@ -617,7 +681,7 @@ describe('Reasoning loop — POST /v1/responses without sessionId (FR-018)', () 
      */
     mockValidToken(TEST_USER_OID);
 
-    const { sessionId: _, ...intakeWithoutSession } = CANNED_INTAKE;
+    const intakeWithoutSession = { input: CANNED_INTAKE.input };
 
     const res = await supertest(app)
       .post('/v1/responses')
@@ -709,5 +773,107 @@ describe('Reasoning loop — POST /v1/responses model failure (FR-003)', () => {
     // the model call, or roll back on model failure.  This contract documents
     // the DESIRED behaviour (transactional — nothing written on model failure).
     expect(requestStore.createRequest).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================================
+// SUITE 8 — POST /v1/responses best-guess mode
+// ============================================================================
+
+describe('Reasoning loop — POST /v1/responses best-guess mode', () => {
+  let sessionStore: InMemorySessionStore;
+  let requestStore: InMemoryRequestStore;
+  let projectSearch: MockProjectSearch;
+
+  beforeEach(() => {
+    process.env.ADVISOR_DEMO_MODE = 'false';
+    sessionStore  = new InMemorySessionStore();
+    requestStore  = new InMemoryRequestStore();
+    projectSearch = new MockProjectSearch();
+    mockChatCreate.mockResolvedValue(PRESET_CHAT_COMPLETION);
+    sessionStore.seed({ id: CANNED_INTAKE.sessionId, ownerId: TEST_USER_OID, title: 'Test session' });
+  });
+
+  afterEach(() => {
+    sessionStore.clear(); requestStore.clear(); vi.resetAllMocks();
+    process.env.ADVISOR_DEMO_MODE = 'false';
+  });
+
+  it('Test 8 [VERIFIED]: bestGuessMode true with published org-context → inferred org answers plus defaults are returned transparently', async () => {
+    const app = createTestApp(sessionStore, requestStore, {
+      projectSearch,
+      aoaiClient: mockAoaiClient,
+      getOrgCtx: () => Promise.resolve(TEST_ORG_CONTEXT),
+    });
+    mockValidToken(TEST_USER_OID);
+
+    const res = await supertest(app)
+      .post('/v1/responses')
+      .set('Authorization', `Bearer ${MOCK_BEARER}`)
+      .send({ ...CANNED_INTAKE, bestGuessMode: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body.assumptions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'primaryCloud', source: 'org-context' }),
+      expect.objectContaining({ field: 'Q2BuildStyle', source: 'org-context' }),
+      expect.objectContaining({ field: 'Q4OrchestrationComplexity', source: 'default' }),
+    ]));
+    expect(res.body.metadata.assumptions).toEqual(res.body.assumptions);
+    expect(res.body.metadata.orgContextVersion).toBe(TEST_ORG_CONTEXT.version);
+    expect(res.body.output[0].content[0].text).toContain('Assumed:');
+
+    const firstCall = mockChatCreate.mock.calls[0][0] as { messages: Array<{ role: string; content: string }> };
+    const systemPrompt = firstCall.messages.find((m) => m.role === 'system')?.content ?? '';
+    expect(systemPrompt).toContain('## Best-Guess Mode');
+    expect(systemPrompt).toContain('Prefer Copilot Studio when low-code is viable');
+    expect(systemPrompt).toContain('Skip 9-question prompts already covered');
+  });
+
+  it('Test 9 [VERIFIED]: bestGuessMode true without org-context → graceful default assumptions only', async () => {
+    const app = createTestApp(sessionStore, requestStore, {
+      projectSearch,
+      aoaiClient: mockAoaiClient,
+      getOrgCtx: () => Promise.resolve(null),
+    });
+    mockValidToken(TEST_USER_OID);
+
+    const res = await supertest(app)
+      .post('/v1/responses')
+      .set('Authorization', `Bearer ${MOCK_BEARER}`)
+      .send({ ...CANNED_INTAKE, bestGuessMode: true });
+
+    expect(res.status).toBe(200);
+    expect(res.body.assumptions.length).toBeGreaterThan(0);
+    expect(res.body.assumptions.every((a: { source: string }) => a.source === 'default')).toBe(true);
+    expect(res.body.metadata.orgContextVersion).toBe('none');
+    expect(res.body.output[0].content[0].text).toContain('Assumed:');
+
+    const firstCall = mockChatCreate.mock.calls[0][0] as { messages: Array<{ role: string; content: string }> };
+    const systemPrompt = firstCall.messages.find((m) => m.role === 'system')?.content ?? '';
+    expect(systemPrompt).toContain('## Best-Guess Mode');
+    expect(systemPrompt).toContain('Organisation Context\nNot available');
+  });
+
+  it('Test 10 [VERIFIED]: bestGuessMode omitted → existing Q&A behaviour remains default with no assumptions', async () => {
+    const app = createTestApp(sessionStore, requestStore, {
+      projectSearch,
+      aoaiClient: mockAoaiClient,
+      getOrgCtx: () => Promise.resolve(TEST_ORG_CONTEXT),
+    });
+    mockValidToken(TEST_USER_OID);
+
+    const res = await supertest(app)
+      .post('/v1/responses')
+      .set('Authorization', `Bearer ${MOCK_BEARER}`)
+      .send(CANNED_INTAKE);
+
+    expect(res.status).toBe(200);
+    expect(res.body.assumptions).toEqual([]);
+    expect(res.body.output[0].content[0].text).not.toContain('Assumed:');
+
+    const firstCall = mockChatCreate.mock.calls[0][0] as { messages: Array<{ role: string; content: string }> };
+    const systemPrompt = firstCall.messages.find((m) => m.role === 'system')?.content ?? '';
+    expect(systemPrompt).not.toContain('## Best-Guess Mode');
+    expect(systemPrompt).toContain('Ask 2-3 at a time');
   });
 });

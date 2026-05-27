@@ -82,8 +82,9 @@ export function resolveCallerId(req: ExpressRequest): CallerIdentity {
   }
 
   // JWT validation middleware (jwt-middleware.ts) runs upstream and attaches req.user.
-  // Reads oid from the already-validated token claims (FR-014, FR-019).
-  const oid: string | undefined = req.user?.oid;
+  // Some host adapters attach claims at req.auth.payload; keep both conventions.
+  const reqWithAuth = req as ExpressRequest & { auth?: { payload?: { oid?: string } } };
+  const oid: string | undefined = req.user?.oid ?? reqWithAuth.auth?.payload?.oid;
 
   if (!oid) {
     throw new Error(

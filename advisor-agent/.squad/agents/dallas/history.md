@@ -7,6 +7,26 @@
 
 ## Active Learnings (M2+)
 
+### 2026-05-27 — Best-Guess Mode with Transparent Assumptions
+
+**What was built:**
+- `POST /v1/responses` accepts `bestGuessMode: true` or `inferFromOrgContext: true` on the non-streaming payload. Default remains off.
+- `agent/src/framework/advisor-loop.ts` pre-fills inferable answers from the currently published `OrgContext` and adds safe defaults for the remaining 9-question gaps.
+- `agent/src/data/models.ts` defines `AdvisorAssumption { field, value, source }`; responses return `assumptions` top-level and under `metadata.assumptions`.
+- `agent/src/adapter/responses.ts` persists assumptions on the Request and readiness brief when produced.
+- `agent/src/__tests__/reasoning-loop.test.ts` covers org-context inference, no-org-context fallback, and best-guess-off regression. Agent tests now pass 51/51, and root `npm run test` passes.
+
+**Assumption-surfacing pattern:**
+Use inference-with-transparency. Never hide a guessed answer. Every inferred or defaulted answer appears in the payload and is appended to assistant text under `Assumed:` so users can correct it in follow-up turns.
+
+**Design decision:**
+Best-guess only changes the batched Responses path. SSE remains unchanged for the next streaming wave.
+
+**Decisions:** `.squad/decisions/inbox/dallas-best-guess-mode.md`, `.squad/decisions/inbox/dallas-best-guess-contract.md`  
+**Skill:** `.squad/skills/inference-with-transparency/SKILL.md`
+
+---
+
 ### 2026-05-27 — Admin Write API: Org-Context Versioning (FR-024, M2)
 
 **What was built:**

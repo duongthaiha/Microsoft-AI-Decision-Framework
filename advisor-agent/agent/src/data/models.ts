@@ -92,6 +92,12 @@ export interface FrameworkAnswers {
   clarifications?: Record<string, string>;
 }
 
+export interface AdvisorAssumption {
+  field: string;
+  value: string;
+  source: "org-context" | "default";
+}
+
 /** A project match returned by the Reuse Gate search. */
 export interface SimilarProjectMatch {
   projectId: string;
@@ -129,6 +135,8 @@ export interface ReadinessBrief {
   alignmentNotes: AlignmentNote[];
   risks: string[];
   nextActions: string[];
+  /** Best-guess answers applied instead of blocking on clarification. */
+  assumptions?: AdvisorAssumption[];
   /** Id of the OrgContext version used to generate this brief. */
   orgContextVersion: string;
   generatedAt: ISOTimestamp;
@@ -168,6 +176,8 @@ export interface Request {
   reuseDecision: ReuseGateDecision;
   linkedProjectId?: string;
   readinessBrief?: ReadinessBrief;
+  /** Best-guess answers applied instead of blocking on clarification. */
+  assumptions?: AdvisorAssumption[];
   /** Reference id (or inline payload) for the readiness brief. */
   readinessBriefRef?: string;
   status: RequestStatus;

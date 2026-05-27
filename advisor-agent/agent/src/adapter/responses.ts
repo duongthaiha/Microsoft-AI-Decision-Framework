@@ -162,6 +162,7 @@ async function handleResponsesBatch(
       const body = req.body ?? {};
       const intake = body.input ?? body;
       const { sessionId: incomingSessionId, title: bodyTitle } = body;
+      const bestGuessMode = body.bestGuessMode === true || body.inferFromOrgContext === true;
 
       // Resolve or create session
       let sessionId = incomingSessionId as string | undefined;
@@ -213,6 +214,7 @@ async function handleResponsesBatch(
             deployment: deps.aoaiDeployment,
             projectSearch: deps.projectSearch,
             orgCtx,
+            bestGuessMode,
           }
         );
       } catch (modelErr) {
@@ -292,10 +294,12 @@ async function handleResponsesBatch(
             ],
           },
         ],
+        assumptions: loopResult.assumptions,
         metadata: {
           bxtScore: loopResult.bxtScore ?? null,
           reuseDecision: loopResult.reuseDecision ?? null,
           readinessBrief: loopResult.readinessBrief ?? null,
+          assumptions: loopResult.assumptions,
           orgContextVersion: loopResult.orgContextVersion,
         },
       });
@@ -519,6 +523,7 @@ async function persistRequest(
     status: loopResult.readinessBrief ? "ReadyForConfirmation" : "Draft",
     updatedAt: new Date().toISOString(),
     orgContextVersion: loopResult.orgContextVersion,
+    assumptions: loopResult.assumptions,
   };
   if (loopResult.searchMatches) patch.similarProjectMatches = loopResult.searchMatches;
   if (loopResult.reuseDecision) patch.reuseDecision = loopResult.reuseDecision;
