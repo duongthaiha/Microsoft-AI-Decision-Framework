@@ -1701,3 +1701,78 @@ See `.squad/decisions/inbox/parker-foundry-hosted-agent-blocker.md` for full det
 ## Commit strategy
 
 Pushed App Insights changes first (separate commit to reduce conflict with Dallas's streaming work on index.ts + responses.ts), then Foundry docs.
+
+---
+
+#### dallas-401-deep-dive-audience-fix
+
+**By:** Dallas (Backend & Agent Developer)  
+**Date:** 2026-05-27T07:52:00Z  
+**Status:** Deployed — revision `advisor-agent-app--azd-1779868342`
+
+**Problem**
+
+`GET /sessions` returning 401 for all requests even after the dual-issuer fix (revision 0000005). Ha cleared site data, opened incognito, signed in fresh — still 401.
+
+**Diagnosis**
+
+The diagnostic logging from revision 0000005 gave us an instant answer from the live ACA logs:
+
+```
+reason: 'unexpected "aud" claim value'
+iss: 'https://login.microsoftonline.com/cdfe81b5-821e-4f07-9ea7-516efc8497e4/v2.0'
+aud: '4f4f4a4d-e60f-4b86-a681-86059aae4597'
+ver: '2.0'
+```
+
+The `iss` and `ver` were correct. The `aud` was the bare GUID `4f4f4a4d-e60f-4b86-a681-86059aae4597` instead of `api://4f4f4a4d-e60f-4b86-a681-86059aae4597`.
+
+**Root cause:** The Entra app registration's **Application ID URI** is set to the bare GUID, not the `api://` prefix form. When the Application ID URI is just the GUID, Entra sets `aud` to the raw GUID in issued tokens. The backend expected the `api://` URI form.
+
+The SPA config, token acquisition path, and MSAL scopes were all correct — this was a pure Entra app registration configuration gap.
+
+**Decision**
+
+### Immediate fix (deployed)
+
+Accept both audience forms in `jwt-middleware.ts`:
+
+```ts
+const APP_ID = "4f4f4a4d-e60f-4b86-a681-86059aae4597";
+const API_AUDIENCE_URI = process.env.ENTRA_API_AUDIENCE ?? `api://${APP_ID}`;
+const ACCEPTED_AUDIENCES: string[] = [...new Set([API_AUDIENCE_URI, APP_ID])];
+// passed to jose.jwtVerify as: audience: ACCEPTED_AUDIENCES
+```
+
+**Security rationale:** The bare GUID `4f4f4a4d-e60f-4b86-a681-86059aae4597` is unique to this app registration — identical security posture to accepting `api://4f4f4a4d-e60f-4b86-a681-86059aae4597`. This is the same dual-form pattern we already apply to issuers (v1/v2).
+
+### Bonus: /v1/whoami diagnostic endpoint
+
+Added `GET /v1/whoami` — public (no JWT guard), requires Authorization header, decodes without verifying, returns `{header, claims}`. Registered BEFORE jwtMiddleware in Express so it's reachable even with a rejected token. Lets Ha (or anyone debugging auth) see exactly what claims Entra put in the token without needing DevTools network tab parsing.
+
+### Longer-term fix (Parker to action)
+
+Set the **Application ID URI** in the Entra portal to `api://4f4f4a4d-e60f-4b86-a681-86059aae4597`:  
+Portal → App registrations → `4f4f4a4d-e60f-4b86-a681-86059aae4597` → Expose an API → Application ID URI → Edit → `api://4f4f4a4d-e60f-4b86-a681-86059aae4597`.
+
+After that change, all issued tokens will carry the `api://` form as `aud`. The bare GUID fallback in the middleware becomes a silent safety net.
+
+**Files Changed**
+
+| File | Change |
+|------|--------|
+| `agent/src/auth/jwt-middleware.ts` | Added `ACCEPTED_AUDIENCES` array (bare GUID + api:// URI), pass to `jwtVerify`; exported `decodeTokenClaims` helper |
+| `agent/src/index.ts` | Added `GET /v1/whoami` diagnostic endpoint before JWT middleware |
+| `agent/src/__tests__/dual-issuer-jwt.test.ts` | Added `Dual-audience JWT acceptance` suite (4 new tests) |
+
+**Tests:** 34/34 passing  
+**Revision:** `advisor-agent-app--azd-1779868342` (100% traffic)
+
+**The Pattern (generalised)**
+
+For any Entra-registered API in this project:
+- Pass `issuer: [v2Issuer, v1Issuer]` — both issuer format variants
+- Pass `audience: [apiUriForm, bareGuidForm]` — both audience format variants
+- Keep `decodeJwt` diagnostic logging on failure — it paid for itself in <24h
+
+The combination eliminates all classes of Entra registration misconfiguration breakage where the app's identity is unambiguous (unique GUID).

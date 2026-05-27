@@ -147,3 +147,22 @@ requests | where url contains "/v1/responses" | project timestamp, duration, res
 ## 2026-05-27 — JWT Middleware Update (Cross-agent note)
 
 **From Dallas:** JWT middleware now accepts **both v1 and v2 Entra token issuers**. If your infrastructure work involves token validation, auth proxy configuration, or Entra integration testing, be aware that the backend middleware accepts either issuer format (`login.microsoftonline.com/{tenantId}/v2.0` and `sts.windows.net/{tenantId}/`). This is a defensive pattern that maintains the audience + issuer validation security model. Do not re-introduce strict v2-only validation in future work. See decision `dallas-v2-token-fix`.
+
+---
+
+## 2026-05-27 — Entra Application ID URI Configuration (Open Task)
+
+**From Dallas:** JWT audience validation now accepts both audience forms:
+- Proper form: `api://4f4f4a4d-e60f-4b86-a681-86059aae4597` (with `api://` prefix)
+- Bare GUID: `4f4f4a4d-e60f-4b86-a681-86059aae4597` (safety net)
+
+**📌 ACTION REQUIRED:** Configure Entra app's **Application ID URI** to close the audience gap:
+1. Portal → App registrations → `4f4f4a4d-e60f-4b86-a681-86059aae4597` → Expose an API
+2. Edit **Application ID URI** to `api://4f4f4a4d-e60f-4b86-a681-86059aae4597`
+3. Save
+
+**Why:** Once this is done, all new tokens will carry the proper `api://` form as `aud` claim. The bare-GUID acceptance in middleware becomes a silent safety net (not the primary path).
+
+**Context:** Persistent 401 errors were caused by Entra issuing tokens with bare GUID `aud` instead of `api://` form. Middleware fix deployed to revision `advisor-agent-app--azd-1779868342` (34/34 tests pass), but the root fix (Application ID URI setting) closes the gap permanently.
+
+See decision record: `dallas-401-deep-dive-audience-fix` in decisions.md
