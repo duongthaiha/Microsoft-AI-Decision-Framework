@@ -262,3 +262,28 @@ export interface OrgContext {
   customInstructions: CustomInstruction[];
   published: boolean;
 }
+
+// ---------------------------------------------------------------------------
+// OrgContextVersion (container: org_contexts, partition key: /id)
+// M2 — versioned, admin-managed org context (FR-024).
+// ---------------------------------------------------------------------------
+
+/**
+ * A versioned snapshot of the Organisation Context stored in the `org_contexts`
+ * Cosmos container.  Only one version may have `published = true` at a time;
+ * the advisor loads the published version on every reasoning turn.
+ */
+export interface OrgContextVersion {
+  /** Cosmos document id — e.g. "org-ctx-v3". Also the partition key. */
+  id: string;
+  /** Monotonically increasing integer version number. */
+  version: number;
+  /** ISO-8601 timestamp set when published=true. */
+  publishedAt: string;
+  /** Entra identity of the admin who last published this version. */
+  publishedBy: { oid: string; name: string };
+  /** True for the single currently-active version. */
+  published: boolean;
+  /** The actual policy document — re-uses the existing OrgContext shape. */
+  content: OrgContext;
+}

@@ -9,14 +9,18 @@
  * the resource accessed, and any filter parameters (FR-028, §11 Audit logging).
  *
  * Routes:
- *   GET  /admin/org-context          — read active Organisation Context
- *   PUT  /admin/org-context          — create/publish a new Organisation Context version
+ *   GET  /admin/org-context                        — read active Organisation Context
+ *   GET  /admin/org-context/versions               — list all versions (desc)
+ *   GET  /admin/org-context/versions/:id           — get one version
+ *   POST /admin/org-context/versions               — create draft version
+ *   POST /admin/org-context/versions/:id/publish   — publish a version
  *   GET  /admin/requests             — list all Requests (cross-partition, AdvisorAdmin only)
  *   GET  /admin/requests/:id         — Request detail (readiness brief, alignment notes)
  *   GET  /admin/projects             — list all Projects
  *   GET  /admin/projects/:id         — Project detail + linked Requests
  *
  * FR-021 — admin backend gated by AdvisorAdmin Entra app role.
+ * FR-024 — versioned org context write API (M2).
  * FR-027 — Requests list screen.
  * FR-028 — Request detail screen (audit-logged on every open).
  * FR-029 — Projects list and detail screens.
@@ -25,12 +29,24 @@
 
 import { Router, type Request, type Response } from "express";
 import { requireRole } from "../auth/jwt-middleware.js";
+import type { IOrgContextVersionStore } from "../data/org-context-store.js";
+import type { OrgContext } from "../data/models.js";
+
+// ---------------------------------------------------------------------------
+// Dependency injection shape
+// ---------------------------------------------------------------------------
+
+export interface AdminRouterDeps {
+  orgContextStore?: IOrgContextVersionStore;
+  /** Fallback seed — used by GET /admin/org-context when no published version exists. */
+  seedOrgContext?: OrgContext | null;
+}
 
 // ---------------------------------------------------------------------------
 // Router factory
 // ---------------------------------------------------------------------------
 
-export function createAdminRouter(): Router {
+export function createAdminRouter(deps: AdminRouterDeps = {}): Router {
   const router = Router();
 
   // Apply the AdvisorAdmin role gate to every route in this sub-router.
@@ -38,27 +54,109 @@ export function createAdminRouter(): Router {
   router.use(requireRole("AdvisorAdmin"));
 
   // -------------------------------------------------------------------------
-  // Organisation Context
+  // Organisation Context — versioned write API (FR-024, M2)
   // -------------------------------------------------------------------------
 
   /**
    * GET /admin/org-context
-   * Returns the active (published) Organisation Context.
-   * Audit-log: adminId, endpoint, timestamp (FR-028, §11).
+   * Returns the active (published) Organisation Context content.
+   * Falls back to the seed JSON if no published version exists yet.
    */
-  router.get("/org-context", (_req: Request, res: Response) => {
-    // M1: orgContextStore.getActiveOrgContext('default') — audit-log this call.
-    res.status(501).json({ error: "Not implemented — M1 will implement org-context read." });
+  router.get("/org-context", async (req: Request, res: Response) => {
+    const adminId = req.user?.oid ?? "unknown";
+    console.log(`[admin-api] GET /org-context  adminId=${adminId}`);
+    try {
+      if (deps.orgContextStore) {
+        const published = await deps.orgContextStore.getPublished();
+        if (published) return res.json(published.content);
+      }
+      // Fall back to seed
+      if (deps.seedOrgContext) return res.json(deps.seedOrgContext);
+      return res.status(404).json({ error: "No published org context found" });
+    } catch (err) {
+      return handleAdminError(err, res);
+    }
   });
 
   /**
-   * PUT /admin/org-context
-   * Creates a new Organisation Context version and optionally publishes it.
-   * Audit-log: adminId, version created, whether published (FR-022, FR-023, §11).
+   * GET /admin/org-context/versions
+   * Returns all versions ordered by version DESC.
    */
-  router.put("/org-context", (_req: Request, res: Response) => {
-    // M1: orgContextStore.publishVersion(orgId, content, editorId) — audit-log this call.
-    res.status(501).json({ error: "Not implemented — M1 will implement org-context write." });
+  router.get("/org-context/versions", async (req: Request, res: Response) => {
+    const adminId = req.user?.oid ?? "unknown";
+    console.log(`[admin-api] GET /org-context/versions  adminId=${adminId}`);
+    if (!deps.orgContextStore) {
+      return res.status(503).json({ error: "Org context store not configured" });
+    }
+    try {
+      const versions = await deps.orgContextStore.listAll();
+      return res.json({ versions });
+    } catch (err) {
+      return handleAdminError(err, res);
+    }
+  });
+
+  /**
+   * GET /admin/org-context/versions/:id
+   * Returns a single version by id.
+   */
+  router.get("/org-context/versions/:id", async (req: Request, res: Response) => {
+    const adminId = req.user?.oid ?? "unknown";
+    const { id } = req.params;
+    console.log(`[admin-api] GET /org-context/versions/${id}  adminId=${adminId}`);
+    if (!deps.orgContextStore) {
+      return res.status(503).json({ error: "Org context store not configured" });
+    }
+    try {
+      const versions = await deps.orgContextStore.listAll();
+      const version = versions.find((v) => v.id === id);
+      if (!version) return res.status(404).json({ error: "Version not found" });
+      return res.json(version);
+    } catch (err) {
+      return handleAdminError(err, res);
+    }
+  });
+
+  /**
+   * POST /admin/org-context/versions
+   * Body: OrgContext — creates a new draft version (published=false).
+   */
+  router.post("/org-context/versions", async (req: Request, res: Response) => {
+    const adminId = req.user?.oid ?? "unknown";
+    const adminName = req.user?.name ?? "Admin";
+    console.log(`[admin-api] POST /org-context/versions  adminId=${adminId}`);
+    if (!deps.orgContextStore) {
+      return res.status(503).json({ error: "Org context store not configured" });
+    }
+    try {
+      const content = req.body as OrgContext;
+      if (!content || typeof content !== "object") {
+        return res.status(400).json({ error: "Request body must be an OrgContext document" });
+      }
+      const draft = await deps.orgContextStore.createDraft(content, { oid: adminId, name: adminName });
+      return res.status(201).json(draft);
+    } catch (err) {
+      return handleAdminError(err, res);
+    }
+  });
+
+  /**
+   * POST /admin/org-context/versions/:id/publish
+   * Marks the given version as published=true; all others become published=false.
+   */
+  router.post("/org-context/versions/:id/publish", async (req: Request, res: Response) => {
+    const adminId = req.user?.oid ?? "unknown";
+    const { id } = req.params;
+    console.log(`[admin-api] POST /org-context/versions/${id}/publish  adminId=${adminId}`);
+    if (!deps.orgContextStore) {
+      return res.status(503).json({ error: "Org context store not configured" });
+    }
+    try {
+      const published = await deps.orgContextStore.publish(id);
+      return res.json(published);
+    } catch (err) {
+      return handleAdminError(err, res);
+    }
   });
 
   // -------------------------------------------------------------------------
@@ -117,4 +215,16 @@ export function createAdminRouter(): Router {
   });
 
   return router;
+}
+
+// ---------------------------------------------------------------------------
+// Error helper
+// ---------------------------------------------------------------------------
+
+function handleAdminError(err: unknown, res: Response): Response {
+  console.error("[admin-api] error:", err);
+  const code = (err as { code?: number }).code;
+  if (code === 404) return res.status(404).json({ error: "Not found" });
+  if (code === 503) return res.status(503).json({ error: "Service unavailable" });
+  return res.status(500).json({ error: "Internal server error" });
 }

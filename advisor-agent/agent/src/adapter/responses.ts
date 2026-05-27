@@ -106,16 +106,40 @@ export function createResponsesAdapter(deps: ResponsesAdapterDeps): Router {
   // -------------------------------------------------------------------------
   // Responses protocol endpoint — main advisor entry point.
   // FR-004, FR-007, FR-009, FR-010, FR-011, FR-013
+  //
+  // M2: supports SSE streaming via Accept: text/event-stream.
+  //     Non-streaming fallback preserves M1 batched JSON behaviour.
   // -------------------------------------------------------------------------
 
   router.post("/v1/responses", async (req: Request, res: Response) => {
+    const wantsSSE = (req.headers.accept ?? "").includes("text/event-stream");
+    if (wantsSSE) {
+      await handleResponsesSSE(req, res, deps);
+    } else {
+      await handleResponsesBatch(req, res, deps);
+    }
+  });
+
+  return router;
+}
+
+// ---------------------------------------------------------------------------
+// Batched JSON path (M1 behaviour — unchanged)
+// ---------------------------------------------------------------------------
+
+async function handleResponsesBatch(
+  req: Request,
+  res: Response,
+  deps: ResponsesAdapterDeps
+): Promise<void> {
     try {
       const { ownerId } = resolveCallerId(req);
 
       if (!deps.aoaiClient) {
-        return res.status(503).json({
+        res.status(503).json({
           error: "Advisor reasoning loop not available — AOAI_ENDPOINT not configured.",
         });
+        return;
       }
 
       const body = req.body ?? {};
@@ -131,7 +155,8 @@ export function createResponsesAdapter(deps: ResponsesAdapterDeps): Router {
       } else {
         const existing = await deps.sessionStore.getSession(ownerId, sessionId);
         if (!existing) {
-          return res.status(404).json({ error: "Session not found or not owned by caller." });
+          res.status(404).json({ error: "Session not found or not owned by caller." });
+          return;
         }
       }
 
@@ -152,14 +177,7 @@ export function createResponsesAdapter(deps: ResponsesAdapterDeps): Router {
       let loopResult;
       try {
         loopResult = await runAdvisorLoop(
-          {
-            businessOutcome: intake.businessOutcome ?? "",
-            targetUsers: intake.targetUsers ?? "",
-            desiredBehavior: intake.desiredBehavior ?? "",
-            dataSources: Array.isArray(intake.dataSources) ? intake.dataSources.join(", ") : intake.dataSources,
-            actions: Array.isArray(intake.actions) ? intake.actions.join(", ") : intake.actions,
-            constraints: Array.isArray(intake.constraints) ? intake.constraints.join(", ") : intake.constraints,
-          },
+          buildIntakeFields(intake),
           [] as ChatCompletionMessageParam[],
           {
             aoaiClient: deps.aoaiClient,
@@ -170,36 +188,15 @@ export function createResponsesAdapter(deps: ResponsesAdapterDeps): Router {
         );
       } catch (modelErr) {
         console.error("[responses-adapter] error:", modelErr);
-        return res.status(502).json({
+        res.status(502).json({
           error: "advisor_unavailable",
           reason: (modelErr as Error).message ?? "Model call failed",
         });
+        return;
       }
 
       // Persist request record AFTER model succeeds (transactional — no orphaned drafts on failure)
-      let requestRecord = await findOpenRequest(deps.requestStore, ownerId, sessionId);
-      if (!requestRecord) {
-        requestRecord = await deps.requestStore.createRequest(ownerId, sessionId, intake.title ?? intake.businessOutcome?.slice(0, 60) ?? "Request");
-      }
-
-      // Patch intake fields and framework results onto request
-      const patch: Parameters<typeof deps.requestStore.updateRequest>[2] = {
-        title: intake.title ?? requestRecord.title,
-        businessOutcome: intake.businessOutcome ?? requestRecord.businessOutcome,
-        targetUsers: intake.targetUsers ?? requestRecord.targetUsers,
-        desiredBehavior: intake.desiredBehavior ?? requestRecord.desiredBehavior,
-        dataSources: Array.isArray(intake.dataSources) ? intake.dataSources.join(", ") : (intake.dataSources ?? requestRecord.dataSources),
-        actions: Array.isArray(intake.actions) ? intake.actions.join(", ") : (intake.actions ?? requestRecord.actions),
-        constraints: Array.isArray(intake.constraints) ? intake.constraints.join(", ") : (intake.constraints ?? requestRecord.constraints),
-        status: loopResult.readinessBrief ? "ReadyForConfirmation" : "Draft",
-        updatedAt: new Date().toISOString(),
-        orgContextVersion: loopResult.orgContextVersion,
-      };
-      if (loopResult.searchMatches) patch.similarProjectMatches = loopResult.searchMatches;
-      if (loopResult.reuseDecision) patch.reuseDecision = loopResult.reuseDecision;
-      if (loopResult.readinessBrief) patch.readinessBrief = loopResult.readinessBrief;
-
-      const updatedRequest = await deps.requestStore.updateRequest(ownerId, requestRecord.requestId, patch);
+      const updatedRequest = await persistRequest(deps.requestStore, ownerId, sessionId, intake, loopResult);
 
       // Persist assistant turn
       const assistantTurnId = randomUUID();
@@ -259,14 +256,213 @@ export function createResponsesAdapter(deps: ResponsesAdapterDeps): Router {
     } catch (err) {
       handleError(err, res);
     }
-  });
-
-  return router;
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// SSE streaming path (M2)
 // ---------------------------------------------------------------------------
+
+/** Writes one SSE event frame to the response. */
+function sseWrite(res: Response, event: string, data: unknown): void {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+
+/** Writes an SSE keepalive comment (prevents ACA idle-timeout disconnect). */
+function sseKeepalive(res: Response): void {
+  res.write(`: keepalive\n\n`);
+}
+
+async function handleResponsesSSE(
+  req: Request,
+  res: Response,
+  deps: ResponsesAdapterDeps
+): Promise<void> {
+  // Set SSE headers before any await — headers must be sent before body.
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.flushHeaders();
+
+  // Heartbeat every 15s — prevents ACA idle-timeout (30s default).
+  const heartbeat = setInterval(() => sseKeepalive(res), 15_000);
+
+  const endSSE = (): void => {
+    clearInterval(heartbeat);
+    res.end();
+  };
+
+  try {
+    const { ownerId } = resolveCallerId(req);
+
+    if (!deps.aoaiClient) {
+      sseWrite(res, "error", { code: "no_aoai", message: "Advisor reasoning loop not available — AOAI_ENDPOINT not configured." });
+      endSSE();
+      return;
+    }
+
+    const body = req.body ?? {};
+    const intake = body.input ?? body;
+    const { sessionId: incomingSessionId, title: bodyTitle } = body;
+
+    // Resolve or create session
+    let sessionId = incomingSessionId as string | undefined;
+    if (!sessionId) {
+      const title = bodyTitle ?? intake.title ?? intake.businessOutcome?.slice(0, 60) ?? "New Session";
+      const newSession = await deps.sessionStore.createSession(ownerId, title);
+      sessionId = newSession.sessionId;
+    } else {
+      const existing = await deps.sessionStore.getSession(ownerId, sessionId);
+      if (!existing) {
+        sseWrite(res, "error", { code: "not_found", message: "Session not found or not owned by caller." });
+        endSSE();
+        return;
+      }
+    }
+
+    // Persist user turn
+    const userTurnId = randomUUID();
+    await deps.sessionStore.appendTurn(ownerId, sessionId, {
+      turnId: userTurnId,
+      role: "user",
+      content: JSON.stringify(intake),
+      timestamp: new Date().toISOString(),
+    });
+
+    const turnIndex = 0;
+    const turnId = `turn_${randomUUID().replace(/-/g, "")}`;
+    sseWrite(res, "turn.created", { id: turnId, turnIndex });
+
+    // Load org context
+    const orgCtx = await deps.getOrgCtx();
+
+    // Run advisor reasoning loop with SSE event forwarding
+    let loopResult;
+    try {
+      loopResult = await runAdvisorLoop(
+        buildIntakeFields(intake),
+        [] as ChatCompletionMessageParam[],
+        {
+          aoaiClient: deps.aoaiClient,
+          deployment: deps.aoaiDeployment,
+          projectSearch: deps.projectSearch,
+          orgCtx,
+          onEvent: (event: SSELoopEvent) => {
+            sseWrite(res, event.event, event.data);
+          },
+        }
+      );
+    } catch (modelErr) {
+      console.error("[responses-adapter] SSE model error:", modelErr);
+      sseWrite(res, "error", {
+        code: "advisor_unavailable",
+        message: (modelErr as Error).message ?? "Model call failed",
+      });
+      endSSE();
+      return;
+    }
+
+    // Emit turn.completed before persistence so client sees it immediately
+    sseWrite(res, "turn.completed", {
+      finalText: loopResult.assistantText,
+      usage: { orgContextVersion: loopResult.orgContextVersion },
+    });
+
+    // Persist request record and assistant turn
+    let requestId: string;
+    try {
+      const updatedRequest = await persistRequest(deps.requestStore, ownerId, sessionId, intake, loopResult);
+      requestId = updatedRequest.requestId;
+
+      await deps.sessionStore.appendTurn(ownerId, sessionId, {
+        turnId: randomUUID(),
+        role: "assistant",
+        content: loopResult.assistantText,
+        timestamp: new Date().toISOString(),
+      });
+    } catch (persistErr) {
+      console.error("[responses-adapter] SSE persist error:", persistErr);
+      // Non-fatal — user already got the response; log but don't fail the SSE stream
+      requestId = "persist-failed";
+    }
+
+    sseWrite(res, "response.done", { requestId, sessionId });
+    endSSE();
+  } catch (err) {
+    console.error("[responses-adapter] SSE error:", err);
+    // Only write error event if headers haven't been sent (they have — use sseWrite).
+    try {
+      sseWrite(res, "error", {
+        code: "internal_error",
+        message: (err as Error).message ?? "Internal server error",
+      });
+    } catch {
+      // If even writing the error event fails, just end
+    }
+    endSSE();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Shared helpers
+// ---------------------------------------------------------------------------
+
+function buildIntakeFields(intake: Record<string, unknown>) {
+  return {
+    businessOutcome: (intake.businessOutcome as string) ?? "",
+    targetUsers: (intake.targetUsers as string) ?? "",
+    desiredBehavior: (intake.desiredBehavior as string) ?? "",
+    dataSources: Array.isArray(intake.dataSources)
+      ? (intake.dataSources as string[]).join(", ")
+      : (intake.dataSources as string | undefined),
+    actions: Array.isArray(intake.actions)
+      ? (intake.actions as string[]).join(", ")
+      : (intake.actions as string | undefined),
+    constraints: Array.isArray(intake.constraints)
+      ? (intake.constraints as string[]).join(", ")
+      : (intake.constraints as string | undefined),
+  };
+}
+
+async function persistRequest(
+  requestStore: IRequestStore,
+  ownerId: string,
+  sessionId: string,
+  intake: Record<string, unknown>,
+  loopResult: Awaited<ReturnType<typeof runAdvisorLoop>>
+) {
+  let requestRecord = await findOpenRequest(requestStore, ownerId, sessionId);
+  if (!requestRecord) {
+    requestRecord = await requestStore.createRequest(
+      ownerId,
+      sessionId,
+      (intake.title as string) ?? (intake.businessOutcome as string | undefined)?.slice(0, 60) ?? "Request"
+    );
+  }
+
+  const patch: Parameters<typeof requestStore.updateRequest>[2] = {
+    title: (intake.title as string) ?? requestRecord.title,
+    businessOutcome: (intake.businessOutcome as string) ?? requestRecord.businessOutcome,
+    targetUsers: (intake.targetUsers as string) ?? requestRecord.targetUsers,
+    desiredBehavior: (intake.desiredBehavior as string) ?? requestRecord.desiredBehavior,
+    dataSources: Array.isArray(intake.dataSources)
+      ? (intake.dataSources as string[]).join(", ")
+      : ((intake.dataSources as string) ?? requestRecord.dataSources),
+    actions: Array.isArray(intake.actions)
+      ? (intake.actions as string[]).join(", ")
+      : ((intake.actions as string) ?? requestRecord.actions),
+    constraints: Array.isArray(intake.constraints)
+      ? (intake.constraints as string[]).join(", ")
+      : ((intake.constraints as string) ?? requestRecord.constraints),
+    status: loopResult.readinessBrief ? "ReadyForConfirmation" : "Draft",
+    updatedAt: new Date().toISOString(),
+    orgContextVersion: loopResult.orgContextVersion,
+  };
+  if (loopResult.searchMatches) patch.similarProjectMatches = loopResult.searchMatches;
+  if (loopResult.reuseDecision) patch.reuseDecision = loopResult.reuseDecision;
+  if (loopResult.readinessBrief) patch.readinessBrief = loopResult.readinessBrief;
+
+  return requestStore.updateRequest(ownerId, requestRecord.requestId, patch);
+}
 
 async function findOpenRequest(
   requestStore: IRequestStore,

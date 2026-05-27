@@ -45,12 +45,13 @@ import { createResponsesAdapter } from "./adapter/responses.js";
 import { createAdminRouter } from "./admin/admin-api.js";
 import { CosmosSessionStore } from "./data/session-store.js";
 import { CosmosRequestStore } from "./data/request-store.js";
+import { CosmosOrgContextVersionStore, createNoopOrgContextVersionStore } from "./data/org-context-store.js";
 import { createCosmosClient } from "./data/cosmos-client.js";
 import { AzureProjectSearch } from "./search/project-index.js";
 import { createAoaiClient } from "./framework/advisor-loop.js";
 import { getModelCredential } from "./auth/identity.js";
 import { jwtMiddleware } from "./auth/jwt-middleware.js";
-import type { OrgContext } from "./data/models.js";
+import type { OrgContext, OrgContextVersion } from "./data/models.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
@@ -89,14 +90,45 @@ const credential = getModelCredential();
 const cosmosEndpoint = process.env.COSMOS_ENDPOINT ?? "";
 let sessionStore: CosmosSessionStore | null = null;
 let requestStore: CosmosRequestStore | null = null;
+let orgContextStore = createNoopOrgContextVersionStore();
 
 if (cosmosEndpoint) {
   const cosmosClient = createCosmosClient(cosmosEndpoint, credential);
   sessionStore = new CosmosSessionStore(cosmosClient);
   requestStore = new CosmosRequestStore(cosmosClient);
+  orgContextStore = new CosmosOrgContextVersionStore(cosmosClient);
   console.log("  Cosmos DB   : wired ✓", cosmosEndpoint);
 } else {
   console.warn("  Cosmos DB   : COSMOS_ENDPOINT not set — sessions/requests disabled");
+}
+
+// Load the seed org context from disk (used as fallback and for seeding)
+let seedOrgContext: OrgContext | null = null;
+const seedPath = join(__dirname, "../../../data/org-context-default.json");
+if (existsSync(seedPath)) {
+  try {
+    seedOrgContext = JSON.parse(readFileSync(seedPath, "utf-8")) as OrgContext;
+  } catch {
+    // seed file is optional
+  }
+}
+
+// Seed Cosmos on first boot — if org_contexts container is empty, write version 1 as published.
+if (cosmosEndpoint && seedOrgContext) {
+  orgContextStore.listAll().then(async (versions) => {
+    if (versions.length === 0 && seedOrgContext) {
+      console.log("  Org Context : seeding version 1 from org-context-default.json");
+      try {
+        const draft = await orgContextStore.createDraft(seedOrgContext, { oid: "system", name: "Boot Seed" });
+        await orgContextStore.publish(draft.id);
+        console.log("  Org Context : version 1 published ✓");
+      } catch (err) {
+        console.warn("  Org Context : seed failed —", (err as Error).message);
+      }
+    }
+  }).catch((err) => {
+    console.warn("  Org Context : seed check failed —", (err as Error).message);
+  });
 }
 
 // Azure AI Search
@@ -128,17 +160,14 @@ if (aoaiEndpoint) {
 
 // Org Context loader — reads from Cosmos if available, else from seed file
 async function getOrgCtx(): Promise<OrgContext | null> {
-  // Prefer Cosmos if wired (admin-managed)
-  // For M1, fall back to the static seed file from data/
-  const seedPath = join(__dirname, "../../../data/org-context-default.json");
-  if (existsSync(seedPath)) {
-    try {
-      return JSON.parse(readFileSync(seedPath, "utf-8")) as OrgContext;
-    } catch {
-      return null;
-    }
+  // Per-request: call Cosmos store so freshly published versions take effect immediately
+  try {
+    const published: OrgContextVersion | null = await orgContextStore.getPublished();
+    if (published) return published.content;
+  } catch {
+    // Fall through to seed file
   }
-  return null;
+  return seedOrgContext;
 }
 
 // Null-safe stores (in case Cosmos is not configured)
@@ -162,7 +191,7 @@ app.use("/", createResponsesAdapter({
   aoaiDeployment,
   getOrgCtx,
 }));
-app.use("/admin", createAdminRouter());
+app.use("/admin", createAdminRouter({ orgContextStore, seedOrgContext }));
 
 // ---------------------------------------------------------------------------
 // Start

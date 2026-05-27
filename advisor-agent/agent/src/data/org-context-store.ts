@@ -1,106 +1,176 @@
 /**
- * Cosmos DB store for Organisation Context.
- * Partition key `/orgId` — single 'default' org in MVP; schema reserves the key
- * so multi-org can be added without migration (squad-open-questions-defaults.md, #10).
+ * Cosmos DB store for versioned Organisation Context.
  *
- * The **agent identity** may only call `getActiveOrgContext` and `getOrgContextVersion`.
- * The `publishVersion` method (and any admin-write path) is called only by the
- * admin backend identity, which has read/write RBAC on the `org-context` container.
- * The agent identity must have read-only RBAC on `org-context` (spec §11, FR-016).
+ * Container: `org_contexts`, partition key `/id`.
+ * One document per version — each has a unique id like "org-ctx-v1".
+ * Only ONE document may have `published = true` at a time.
+ *
+ * Agent read path  — `getPublished()` called on every reasoning turn (FR-024).
+ * Admin write path — `createDraft()` and `publish()` gated behind AdvisorAdmin role.
+ *
+ * Publish atomicity: partition key is `/id` so each version is its own partition —
+ * Cosmos transactional batch requires same partition, so we use a read-modify-write
+ * loop instead.  Eventual consistency is acceptable here (rare admin operation,
+ * one admin at a time per org in MVP).
  *
  * FR-022 — Organisation Context CRUD + versioning.
- * FR-023 — version + orgContextVersion stamped on every Request.
+ * FR-023 — orgContextVersion stamped on every Request.
  * FR-024 — active context loaded for Phase 2 and Phase 3 reasoning.
  *
  * Microsoft Learn: https://learn.microsoft.com/azure/cosmos-db/nosql/
  */
 
-import { NotImplementedError } from "../errors.js";
-import type { OrgContext } from "./models.js";
+import { randomUUID } from "crypto";
+import type { CosmosClient, Database } from "@azure/cosmos";
+import type { OrgContext, OrgContextVersion } from "./models.js";
 
 // ---------------------------------------------------------------------------
 // Interface
 // ---------------------------------------------------------------------------
 
-export interface IOrgContextStore {
+export interface IOrgContextVersionStore {
   /**
-   * Returns the currently published (active) OrgContext for the given org.
-   * Called by the agent on every Phase 2 / Phase 3 recommendation (FR-024).
-   * Read-only — agent identity path.
+   * Returns the single published (active) version, or null if none exists yet.
+   * Called by the agent on every reasoning turn (FR-024).
    */
-  getActiveOrgContext(orgId: string): Promise<OrgContext | null>;
+  getPublished(): Promise<OrgContextVersion | null>;
 
   /**
-   * Returns a specific version of the OrgContext by version string.
-   * Used to reconstruct the context that was active when a given Request was processed.
-   * Read-only — agent identity path.
+   * Returns all versions ordered by version DESC.
+   * Admin-only — AdvisorAdmin role must be verified at the API layer.
    */
-  getOrgContextVersion(orgId: string, version: string): Promise<OrgContext | null>;
+  listAll(): Promise<OrgContextVersion[]>;
 
   /**
-   * Returns the version history for an org (most recent first).
-   * Admin-only path — must be called only when the caller holds AdvisorAdmin role.
+   * Creates a new draft version (published=false).
+   * The version number is max(existing)+1.
+   * Admin-only path.
    */
-  listVersions(orgId: string): Promise<OrgContext[]>;
+  createDraft(
+    content: OrgContext,
+    author: { oid: string; name: string }
+  ): Promise<OrgContextVersion>;
 
   /**
-   * Creates a new immutable version of the OrgContext and optionally publishes it.
-   *
-   * Admin-only path — the agent identity does NOT call this method.
-   * Publishing marks the version as `published: true` and clears the flag on any
-   * previously active version (only one published version at a time).
-   *
-   * FR-022 — CRUD + versioning.
-   * FR-023 — every save creates a new immutable version with version, editorId, editedAt, changeSummary.
+   * Marks the given version as published=true and all others as published=false.
+   * Read-modify-write loop (cross-partition — no Cosmos transactional batch).
+   * Admin-only path.
    */
-  publishVersion(
-    orgId: string,
-    content: Omit<OrgContext, "id" | "orgId" | "version" | "editorId" | "editedAt">,
-    editorId: string
-  ): Promise<OrgContext>;
+  publish(id: string): Promise<OrgContextVersion>;
 }
 
 // ---------------------------------------------------------------------------
-// Stub implementation
+// Live implementation
 // ---------------------------------------------------------------------------
 
-/**
- * Stub — every method throws NotImplementedError.
- *
- * M1 will implement:
- * - getActiveOrgContext: query `org-context` WHERE orgId = :orgId AND published = true; limit 1.
- * - getOrgContextVersion: point-read by (version-derived id, orgId).
- * - listVersions: query all documents for orgId, ordered by editedAt desc.
- * - publishVersion: write new version doc, patch prior published doc to published:false in a
- *   transaction (or accept eventual consistency with a conditional patch).
- */
-export class CosmosOrgContextStore implements IOrgContextStore {
-  getActiveOrgContext(_orgId: string): Promise<OrgContext | null> {
-    // M1: query org-context WHERE orgId = :orgId AND published = true, limit 1.
-    throw new NotImplementedError("CosmosOrgContextStore.getActiveOrgContext");
+const DB_NAME = "advisor";
+const ORG_CONTEXTS_CONTAINER = "org_contexts";
+
+export class CosmosOrgContextVersionStore implements IOrgContextVersionStore {
+  private readonly client: CosmosClient;
+  private dbPromise: Promise<Database> | null = null;
+
+  constructor(client: CosmosClient) {
+    this.client = client;
   }
 
-  getOrgContextVersion(
-    _orgId: string,
-    _version: string
-  ): Promise<OrgContext | null> {
-    // M1: point-read by (orgId + version composite id).
-    throw new NotImplementedError("CosmosOrgContextStore.getOrgContextVersion");
+  private async db(): Promise<Database> {
+    if (!this.dbPromise) {
+      this.dbPromise = this.ensureDb();
+    }
+    return this.dbPromise;
   }
 
-  listVersions(_orgId: string): Promise<OrgContext[]> {
-    // M1: query all versions for orgId, ordered by editedAt desc.
-    // Admin-only; AdvisorAdmin role must be verified at the API layer before calling this.
-    throw new NotImplementedError("CosmosOrgContextStore.listVersions");
+  private async ensureDb(): Promise<Database> {
+    const { database } = await this.client.databases.createIfNotExists({ id: DB_NAME });
+    await database.containers.createIfNotExists({
+      id: ORG_CONTEXTS_CONTAINER,
+      partitionKey: { paths: ["/id"] },
+    });
+    return database;
   }
 
-  publishVersion(
-    _orgId: string,
-    _content: Omit<OrgContext, "id" | "orgId" | "version" | "editorId" | "editedAt">,
-    _editorId: string
-  ): Promise<OrgContext> {
-    // M1: create new immutable version document, then mark prior active version as published:false.
-    // Admin identity only — agent identity does not call this (FR-022, FR-023).
-    throw new NotImplementedError("CosmosOrgContextStore.publishVersion");
+  async getPublished(): Promise<OrgContextVersion | null> {
+    const db = await this.db();
+    const { resources } = await db
+      .container(ORG_CONTEXTS_CONTAINER)
+      .items.query<OrgContextVersion>({
+        query: "SELECT * FROM c WHERE c.published = true ORDER BY c.version DESC OFFSET 0 LIMIT 1",
+      })
+      .fetchAll();
+    return resources[0] ?? null;
   }
+
+  async listAll(): Promise<OrgContextVersion[]> {
+    const db = await this.db();
+    const { resources } = await db
+      .container(ORG_CONTEXTS_CONTAINER)
+      .items.query<OrgContextVersion>({
+        query: "SELECT * FROM c ORDER BY c.version DESC",
+      })
+      .fetchAll();
+    return resources;
+  }
+
+  async createDraft(
+    content: OrgContext,
+    author: { oid: string; name: string }
+  ): Promise<OrgContextVersion> {
+    const db = await this.db();
+    const all = await this.listAll();
+    const maxVersion = all.reduce((m, v) => Math.max(m, v.version), 0);
+    const nextVersion = maxVersion + 1;
+    const id = `org-ctx-v${nextVersion}-${randomUUID().slice(0, 8)}`;
+    const now = new Date().toISOString();
+    const doc: OrgContextVersion = {
+      id,
+      version: nextVersion,
+      publishedAt: "",
+      publishedBy: author,
+      published: false,
+      content,
+    };
+    const { resource } = await db.container(ORG_CONTEXTS_CONTAINER).items.create(doc);
+    return resource as OrgContextVersion;
+  }
+
+  async publish(id: string): Promise<OrgContextVersion> {
+    const db = await this.db();
+    const container = db.container(ORG_CONTEXTS_CONTAINER);
+
+    // Read all versions — cross-partition, no transactional batch possible (different /id partitions).
+    const all = await this.listAll();
+    const target = all.find((v) => v.id === id);
+    if (!target) {
+      throw Object.assign(new Error(`OrgContextVersion '${id}' not found`), { code: 404 });
+    }
+
+    const now = new Date().toISOString();
+
+    // Clear published flag on all currently-published versions
+    for (const v of all) {
+      if (v.published && v.id !== id) {
+        const updated: OrgContextVersion = { ...v, published: false };
+        await container.item(v.id, v.id).replace(updated);
+      }
+    }
+
+    // Mark target as published
+    const published: OrgContextVersion = { ...target, published: true, publishedAt: now };
+    const { resource } = await container.item(id, id).replace(published);
+    return resource as OrgContextVersion;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Noop implementation — used when Cosmos is not configured (local tests / CI)
+// ---------------------------------------------------------------------------
+
+export function createNoopOrgContextVersionStore(): IOrgContextVersionStore {
+  return {
+    getPublished: async () => null,
+    listAll: async () => [],
+    createDraft: async () => { throw Object.assign(new Error("COSMOS_ENDPOINT not configured"), { code: 503 }); },
+    publish: async () => { throw Object.assign(new Error("COSMOS_ENDPOINT not configured"), { code: 503 }); },
+  };
 }

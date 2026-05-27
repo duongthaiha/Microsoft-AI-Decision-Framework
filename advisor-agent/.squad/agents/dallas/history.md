@@ -172,3 +172,44 @@ Entra app registration now live (parker-4 phase 1 complete). Frontend will reque
 **Skill:** `.squad/skills/cors-preflight-with-jwt/SKILL.md`  
 **Decision:** `.squad/decisions/inbox/dallas-cors-preflight-fix.md`  
 **Deployed revision:** `advisor-agent-app--azd-1779864726`
+
+---
+
+## M2 Wave — Streaming + Admin Writes (2026-05-27)
+
+### SSE on Express + ACA pitfalls
+
+**The invariant:** Set ALL response headers AND call `res.flushHeaders()` BEFORE any `await` in an SSE handler. ACA's front-door/APIM can buffer the response until headers are finalized — calling `flushHeaders()` forces the 200 + SSE headers downstream immediately so the client starts receiving frames.
+
+**Key Express SSE setup:**
+```ts
+res.setHeader('Content-Type', 'text/event-stream');
+res.setHeader('Cache-Control', 'no-cache');
+res.setHeader('Connection', 'keep-alive');
+res.flushHeaders(); // flush before any await
+```
+
+**ACA idle-timeout:** Azure Container Apps has a 30-second idle timeout on HTTP connections. SSE connections with no frames will be killed. Fix: emit `: keepalive\n\n` comment every 15 seconds with `setInterval`. This is a zero-payload SSE comment that resets the idle timer without producing an event the client parses.
+
+**Error mid-stream:** Once headers are flushed you cannot change the HTTP status code. Errors must be communicated as `event: error` SSE frames, then `res.end()`. Never throw raw HTTP 500 after headers are flushed — the client will see a truncated body, not an error status.
+
+**Content negotiation pattern:** Check `req.headers.accept?.includes('text/event-stream')` at route entry. Route to `handleResponsesSSE` or `handleResponsesBatch`. Do NOT branch inside a single handler function — it makes error handling branches incompatible (one wants `res.status(5xx).json()`, the other wants `sseWrite(error)`).
+
+**Heartbeat cleanup:** Always `clearInterval(heartbeat)` in a shared `endSSE()` helper called from both the happy path and all error/catch paths. Leaked intervals will fire after `res.end()` and cause "write after end" Node.js errors.
+
+### AOAI streaming with chat.completions.create
+
+**Type overloads:** `client.chat.completions.create({ stream: true })` returns `Promise<Stream<ChatCompletionChunk>>`. TypeScript resolves the overload correctly when `stream: true` is a literal — but if the object is typed as `ChatCompletionCreateParamsBase` (union), TypeScript loses the discriminant. Cast with `as (p: any) => Promise<AsyncIterable<any>>` to avoid complex generic gymnastics in internal helpers.
+
+**Accumulating tool calls from streaming deltas:** Tool call deltas arrive as indexed fragments. Each `delta.tool_calls[n]` has an `index` field. First chunk carries `id` and `function.name`; subsequent chunks carry `function.arguments` fragments. Accumulate in a `Map<index, AccumulatedToolCall>` and only emit `tool.invoked` AFTER the stream is drained — you need all `arguments` before dispatching.
+
+**Text delta vs tool call mutual exclusivity:** In a single model call, `delta.content` and `delta.tool_calls` are mutually exclusive in practice. When the model is generating tool calls, `delta.content` is null. Emitting `text.delta` events directly from `delta.content` is safe.
+
+### Cosmos publish-one without transactional batch
+
+**The problem:** Making exactly one document `published = true` while clearing all others requires a multi-document atomic operation. With partition key `/id`, each version is its own partition — Cosmos transactional batch is not possible.
+
+**Resolution:** Read-modify-write loop. Read all versions, clear `published` on any currently-published doc, set `published = true` on the target. Eventual consistency is acceptable for a rare admin operation. Document the tradeoff explicitly. Alternative for M3 if contention matters: add a separate `org-ctx-pointer` document with a fixed partition key as a cheap indirection layer.
+
+**Skill:** `.squad/skills/express-sse-streaming-aoai/SKILL.md`
+**Decision:** `.squad/decisions/inbox/dallas-m2-streaming-and-admin-writes.md`

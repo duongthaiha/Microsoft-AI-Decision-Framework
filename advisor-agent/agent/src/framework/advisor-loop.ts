@@ -29,6 +29,7 @@ import type { TokenCredential } from "@azure/identity";
 import type {
   ChatCompletionMessageParam,
   ChatCompletionTool,
+  ChatCompletionMessageToolCall,
 } from "openai/resources/chat/completions.js";
 import type { IntakeFields } from "./intake.js";
 import type {
@@ -217,6 +218,15 @@ export interface AdvisorLoopResult {
 }
 
 // ---------------------------------------------------------------------------
+// SSE streaming event types emitted via the onEvent callback
+// ---------------------------------------------------------------------------
+
+export interface SSELoopEvent {
+  event: "tool.invoked" | "tool.result" | "text.delta";
+  data: Record<string, unknown>;
+}
+
+// ---------------------------------------------------------------------------
 // System prompt builder
 // ---------------------------------------------------------------------------
 
@@ -302,6 +312,8 @@ export interface AdvisorLoopDeps {
   deployment: string;
   projectSearch: IProjectSearch | null;
   orgCtx: OrgContext | null;
+  /** Optional SSE callback — when present, model calls use streaming and emit text.delta events. */
+  onEvent?: (event: SSELoopEvent) => void;
 }
 
 export async function runAdvisorLoop(
@@ -329,44 +341,119 @@ export async function runAdvisorLoop(
 
   // Agentic loop — max 8 iterations to prevent runaway tool calls
   for (let i = 0; i < 8; i++) {
-    const response = await deps.aoaiClient.chat.completions.create({
-      model: deps.deployment,
+    const { content, tool_calls } = await callModelIteration(
+      deps.aoaiClient,
+      deps.deployment,
       messages,
-      tools: ADVISOR_TOOLS,
-      tool_choice: "auto",
-      temperature: 0.3,
-      max_tokens: 2000,
+      deps.onEvent
+    );
+
+    const assistantToolCalls = tool_calls && tool_calls.length > 0 ? tool_calls : undefined;
+    messages.push({
+      role: "assistant",
+      content: content ?? null,
+      tool_calls: assistantToolCalls,
     });
 
-    const choice = response.choices[0];
-    if (!choice) break;
-
-    const assistantMsg = choice.message;
-    messages.push({ role: "assistant", content: assistantMsg.content ?? null, tool_calls: assistantMsg.tool_calls });
-
     // If no tool calls, this is the final text response
-    if (!assistantMsg.tool_calls || assistantMsg.tool_calls.length === 0) {
-      result.assistantText = assistantMsg.content ?? "";
+    if (!assistantToolCalls || assistantToolCalls.length === 0) {
+      result.assistantText = content ?? "";
       break;
     }
 
     // Process each tool call
-    for (const toolCall of assistantMsg.tool_calls) {
+    for (const toolCall of assistantToolCalls) {
+      deps.onEvent?.({ event: "tool.invoked", data: { toolName: toolCall.function.name, args: toolCall.function.arguments } });
       const toolResult = await dispatchTool(toolCall.function.name, toolCall.function.arguments, deps, result);
+      deps.onEvent?.({ event: "tool.result", data: { toolName: toolCall.function.name, resultSummary: JSON.stringify(toolResult).slice(0, 200) } });
       messages.push({
         role: "tool",
         tool_call_id: toolCall.id,
         content: JSON.stringify(toolResult),
       });
     }
-
-    if (choice.finish_reason === "stop") {
-      result.assistantText = assistantMsg.content ?? result.assistantText;
-      break;
-    }
   }
 
   return result;
+}
+
+// ---------------------------------------------------------------------------
+// Model call helper — handles streaming and non-streaming transparently
+// ---------------------------------------------------------------------------
+
+/**
+ * One iteration of the model call.
+ * When onEvent is provided, uses `stream: true` and emits text.delta events for
+ * content chunks.  Tool call deltas are accumulated silently then emitted as
+ * tool.invoked/tool.result via the main loop.
+ */
+async function callModelIteration(
+  client: AzureOpenAI,
+  deployment: string,
+  messages: ChatCompletionMessageParam[],
+  onEvent?: (event: SSELoopEvent) => void
+): Promise<{ content: string | null; tool_calls?: ChatCompletionMessageToolCall[] }> {
+  const baseParams = {
+    model: deployment,
+    messages,
+    tools: ADVISOR_TOOLS,
+    tool_choice: "auto" as const,
+    temperature: 0.3,
+    max_tokens: 2000,
+  };
+
+  if (onEvent) {
+    // Streaming path
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const stream = await (client.chat.completions.create as (p: any) => Promise<AsyncIterable<any>>)({
+      ...baseParams,
+      stream: true,
+    });
+
+    let accContent = "";
+    const toolCallsMap = new Map<number, { id: string; type: "function"; function: { name: string; arguments: string } }>();
+
+    for await (const chunk of stream) {
+      const delta = chunk.choices?.[0]?.delta;
+      if (!delta) continue;
+
+      if (typeof delta.content === "string" && delta.content) {
+        accContent += delta.content;
+        onEvent({ event: "text.delta", data: { text: delta.content } });
+      }
+
+      if (Array.isArray(delta.tool_calls)) {
+        for (const tc of delta.tool_calls) {
+          const idx: number = tc.index ?? 0;
+          if (!toolCallsMap.has(idx)) {
+            toolCallsMap.set(idx, { id: "", type: "function", function: { name: "", arguments: "" } });
+          }
+          const acc = toolCallsMap.get(idx)!;
+          if (tc.id) acc.id = tc.id;
+          if (tc.function?.name) acc.function.name += tc.function.name;
+          if (tc.function?.arguments) acc.function.arguments += tc.function.arguments;
+        }
+      }
+    }
+
+    const tool_calls =
+      toolCallsMap.size > 0
+        ? [...toolCallsMap.entries()]
+            .sort(([a], [b]) => a - b)
+            .map(([, tc]) => tc as ChatCompletionMessageToolCall)
+        : undefined;
+
+    return { content: accContent || null, tool_calls };
+  } else {
+    // Non-streaming path (original behaviour)
+    const response = await client.chat.completions.create(baseParams);
+    const choice = response.choices[0];
+    if (!choice) return { content: null };
+    return {
+      content: choice.message.content,
+      tool_calls: choice.message.tool_calls,
+    };
+  }
 }
 
 // ---------------------------------------------------------------------------
