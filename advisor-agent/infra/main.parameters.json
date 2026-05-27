@@ -24,7 +24,7 @@
       "value": "responses"
     },
     "publicNetworking": {
-      "value": true
+      "value": false
     },
     "skuCosmos": {
       "value": "Standard"

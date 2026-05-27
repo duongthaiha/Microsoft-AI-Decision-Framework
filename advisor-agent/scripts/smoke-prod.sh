@@ -52,7 +52,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Endpoints (override via env vars for CI or a different environment)
 # ---------------------------------------------------------------------------
-CONTAINER_APP_URL="${CONTAINER_APP_URL:-https://advisor-agent-app.wittysea-86254dbc.swedencentral.azurecontainerapps.io}"
+CONTAINER_APP_URL="${CONTAINER_APP_URL:-https://advisor-agent-app.delightfulsea-3191f7a0.swedencentral.azurecontainerapps.io}"
 SWA_URL="${SWA_URL:-https://polite-mushroom-0a09fa803.7.azurestaticapps.net}"
 
 # ---------------------------------------------------------------------------
@@ -66,8 +66,8 @@ RESET='\033[0m'
 PASS=0
 FAIL=0
 
-pass() { echo -e "${GREEN}✅ PASS${RESET}  $1"; ((PASS++)); }
-fail() { echo -e "${RED}❌ FAIL${RESET}  $1"; ((FAIL++)); }
+pass() { echo -e "${GREEN}✅ PASS${RESET}  $1"; PASS=$((PASS + 1)); }
+fail() { echo -e "${RED}❌ FAIL${RESET}  $1"; FAIL=$((FAIL + 1)); }
 info() { echo -e "${YELLOW}ℹ  ${RESET}  $1"; }
 
 echo ""

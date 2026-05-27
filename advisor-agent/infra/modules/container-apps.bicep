@@ -55,16 +55,33 @@ param entraApiAudience string = ''
 @description('Comma-separated list of allowed CORS origins (e.g. SWA URL). Injected as ADVISOR_ALLOWED_ORIGINS.')
 param allowedOrigins string = ''
 
+@description('Subnet resource ID for ACA environment VNet integration. Empty string = no VNet (Consumption default).')
+param infrastructureSubnetId string = ''
+
+// When VNet integration is enabled the environment must use a different (new) name because
+// Azure does not allow updating vnetConfiguration on an existing environment.
+// The "-vnet" variant forces a fresh CAE; the pre-provision script deletes the old one first.
+var vnetEnabled = infrastructureSubnetId != ''
+var caeName = vnetEnabled
+  ? '${namePrefix}-cae-vnet-${uniqueString(resourceGroup().id)}'
+  : '${namePrefix}-cae-${uniqueString(resourceGroup().id)}'
+
 // ---------------------------------------------------------------------------
 // Container Apps Environment (Consumption plan — pay-per-use)
 // ---------------------------------------------------------------------------
 
 resource cae 'Microsoft.App/managedEnvironments@2024-03-01' = {
-  name: '${namePrefix}-cae-${uniqueString(resourceGroup().id)}'
+  name: caeName
   location: location
   tags: tags
   properties: {
     zoneRedundant: false
+    // VNet integration wires ACA outbound traffic through the VNet so it can
+    // reach Cosmos and Search private endpoints.
+    // Docs: https://learn.microsoft.com/azure/container-apps/vnet-custom
+    vnetConfiguration: vnetEnabled ? {
+      infrastructureSubnetId: infrastructureSubnetId
+    } : null
   }
 }
 

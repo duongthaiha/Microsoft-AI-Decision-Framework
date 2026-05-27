@@ -49,7 +49,7 @@ param modelPath string = 'azure-byom'
 param hostedAgentProtocol string = 'responses'
 
 @description('Allow public network access to data services. Set false for private-endpoint hardening.')
-param publicNetworking bool = true
+param publicNetworking bool = false
 
 @description('Cosmos DB account SKU (provisioned throughput tier).')
 param skuCosmos string = 'Standard'
@@ -79,6 +79,18 @@ param tags object = {
 // ---------------------------------------------------------------------------
 // Modules
 // ---------------------------------------------------------------------------
+
+// VNet must be provisioned first — ACA and private endpoints depend on it.
+// Deployed unconditionally; container-apps.bicep only wires vnetConfiguration
+// when infrastructureSubnetId is non-empty (which happens via publicNetworking=false).
+module vnet 'modules/vnet.bicep' = if (!publicNetworking) {
+  name: 'vnet'
+  params: {
+    namePrefix: agentNamePrefix
+    location: location
+    tags: tags
+  }
+}
 
 module monitoring 'modules/monitoring.bicep' = {
   name: 'monitoring'
@@ -160,6 +172,46 @@ module containerApps 'modules/container-apps.bicep' = {
     entraTenantId: entraTenantId
     entraApiAudience: entraApiAudience
     allowedOrigins: allowedOrigins
+    // Wire ACA into the VNet so outbound traffic can reach private endpoints.
+    infrastructureSubnetId: !publicNetworking ? vnet.?outputs.acaSubnetId ?? '' : ''
+  }
+}
+
+// Private endpoint for Cosmos DB.
+// Resolves <account>.documents.azure.com to a 10.0.2.x private IP inside the VNet.
+// Refs:
+//   https://learn.microsoft.com/azure/cosmos-db/how-to-configure-private-endpoints
+//   https://learn.microsoft.com/azure/private-link/private-endpoint-dns
+module cosmosPrivateEndpoint 'modules/private-endpoint.bicep' = if (!publicNetworking) {
+  name: 'cosmosPrivateEndpoint'
+  params: {
+    namePrefix: agentNamePrefix
+    location: location
+    tags: tags
+    targetResourceId: cosmos.outputs.accountId
+    resourceShortName: 'cosmos'
+    groupId: 'Sql'
+    privateDnsZoneName: 'privatelink.documents.azure.com'
+    subnetId: vnet.?outputs.peSubnetId ?? ''
+    vnetId: vnet.?outputs.vnetId ?? ''
+  }
+}
+
+// Private endpoint for AI Search.
+// Also flagged as NonCompliant by "Azure AI Services should use Azure Private Link" policy.
+// Ref: https://learn.microsoft.com/azure/search/service-create-private-endpoint
+module searchPrivateEndpoint 'modules/private-endpoint.bicep' = if (!publicNetworking && deploySearch) {
+  name: 'searchPrivateEndpoint'
+  params: {
+    namePrefix: agentNamePrefix
+    location: location
+    tags: tags
+    targetResourceId: search.?outputs.serviceId ?? ''
+    resourceShortName: 'search'
+    groupId: 'searchService'
+    privateDnsZoneName: 'privatelink.search.windows.net'
+    subnetId: vnet.?outputs.peSubnetId ?? ''
+    vnetId: vnet.?outputs.vnetId ?? ''
   }
 }
 

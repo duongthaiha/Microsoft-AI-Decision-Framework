@@ -41,6 +41,17 @@ services:
     language: ts
 
 hooks:
+  # Pre-provision: migrate from Consumption-only CAE to VNet-integrated CAE.
+  # Azure does not allow adding vnetConfiguration to an existing environment,
+  # so we delete the old Consumption CAE (and its Container Apps) before
+  # Bicep creates the new VNet-integrated one.
+  # This is a one-time migration; subsequent provisions are idempotent.
+  preprovision:
+    shell: sh
+    run: scripts/pre-provision.sh
+    continueOnError: false
+    interactive: false
+
   predeploy:
     shell: sh
     run: |

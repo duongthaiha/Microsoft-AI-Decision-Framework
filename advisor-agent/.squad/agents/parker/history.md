@@ -166,3 +166,33 @@ requests | where url contains "/v1/responses" | project timestamp, duration, res
 **Context:** Persistent 401 errors were caused by Entra issuing tokens with bare GUID `aud` instead of `api://` form. Middleware fix deployed to revision `advisor-agent-app--azd-1779868342` (34/34 tests pass), but the root fix (Application ID URI setting) closes the gap permanently.
 
 See decision record: `dallas-401-deep-dive-audience-fix` in decisions.md
+
+---
+
+## 2026-05-27T10:30:00Z — Private Networking (VNet + Private Endpoints)
+
+**Trigger:** Azure Policy auto-remediates Cosmos DB `publicNetworkAccess` to `Disabled` periodically. Ha flagged this after Dallas's band-aid (`az cosmosdb update --public-network-access Enabled`) would be reverted again.
+
+**Solution:** Worked WITH the policy. Architecture: VNet (`10.0.0.0/22`) + `aca-subnet` (/23, delegated `Microsoft.App/environments`) + `pe-subnet` (/27) → Container Apps Environment VNet-integrated → Cosmos + Search private endpoints.
+
+**Implemented:**
+- `infra/modules/vnet.bicep` — new VNet module
+- `infra/modules/private-endpoint.bicep` — generic PE + DNS zone + VNet link module
+- `infra/modules/container-apps.bicep` — added `infrastructureSubnetId` param + `vnetConfiguration` for CAE
+- `infra/modules/cosmos.bicep` — default `publicNetworkAccess` changed to `'Disabled'`
+- `infra/main.bicep` — wired vnet + PE modules; `publicNetworking` default = `false`
+- `infra/main.parameters.json` — `publicNetworking: false`
+- `azure.yaml` — added `preprovision` hook (one-time CAE migration)
+- `scripts/pre-provision.sh` — deletes old Consumption CAE (Azure blocks VNet config update on existing env)
+- `scripts/post-deploy-smoke.sh` — 4-check smoke test; 4/4 PASS
+
+**Deployed:** `az deployment group create` to `rg-advisor-dev`, provision succeeded. New CAE: `advisor-cae-vnet-uwmrjzgkhs2hk`. New FQDN: `advisor-agent-app.delightfulsea-3191f7a0.swedencentral.azurecontainerapps.io`.
+
+**Verified:** Cosmos `publicNetworkAccess == Disabled`, 1 Approved PE, `/health` 200, smoke test 4/4.
+
+**⚠ Action required:** Update `VITE_API_BASE_URL` GitHub variable to new FQDN (old `wittysea-86254dbc` FQDN is gone). SWA→API calls will 404 until updated.
+
+**Decision file:** `parker-private-networking.md` (inbox)
+
+**Previous open task — Entra Application ID URI (`api://4f4f4a4d-...`):** Still open. Not addressed this session. Tracked in history entry above and in `parker-private-networking.md` follow-ups table.
+

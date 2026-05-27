@@ -24,7 +24,7 @@ param tags object
 
 @description('Public network access toggle.')
 @allowed(['Enabled', 'Disabled'])
-param publicNetworkAccess string = 'Enabled'
+param publicNetworkAccess string = 'Disabled'
 
 @description('Cosmos DB account tier (Standard).')
 param skuName string = 'Standard'
