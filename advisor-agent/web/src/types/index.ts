@@ -192,6 +192,17 @@ export interface OrgContext {
   published: boolean;
 }
 
+// ─── OrgContextVersion (M2 — mirrors Dallas's admin versioning contract) ──────
+
+export interface OrgContextVersion {
+  id: string;
+  version: number;
+  published: boolean;
+  publishedAt?: ISOTimestamp;
+  publishedBy?: string;
+  content: OrgContext;
+}
+
 // ─── Hosted Agent Responses protocol shape ────────────────────────────────────
 
 export interface ResponseOutputContent {

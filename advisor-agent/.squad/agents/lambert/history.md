@@ -160,3 +160,80 @@ The SPA type file mirrors the agent types 1:1 — no SPA-only abstractions. When
 
 **Team update:** Chat UI with markdown rendering and session list wiring landed. See decision #265 `lambert-m1-chat-render-and-session-list`. SPA builds successfully; API integration tests pending Dallas deployment. E2E Playwright tests deferred to M2.
 
+---
+
+## M2 — SSE Streaming, Admin Edit/Publish, Reviewer Queue (2026-05-27)
+
+### Hand-rolled SSE with fetch + Authorization header
+
+`EventSource` (browser native) cannot send custom headers — no `Authorization: Bearer` support. For protected routes this is a hard blocker. The solution: hand-roll SSE consumption using `fetch` with `Accept: text/event-stream` and the normal `Authorization` header from `getAccessToken()`. Pattern:
+
+```ts
+const response = await fetch(url, { method: 'POST', headers: { Accept: 'text/event-stream', Authorization: `Bearer ${token}` }, signal });
+const reader = response.body!.getReader();
+const decoder = new TextDecoder();
+let buffer = '';
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+  buffer += decoder.decode(value, { stream: true });
+  const chunks = buffer.split('\n\n');
+  buffer = chunks.pop() ?? '';
+  for (const chunk of chunks) {
+    // parse event: + data: lines
+  }
+}
+```
+
+Key details:
+- Split on `\n\n` (SSE event boundary); keep remainder in `buffer` for partial events
+- Skip lines starting with `: ` (SSE comments / keepalive)
+- `decoder.decode(value, { stream: true })` handles multi-byte characters split across chunks
+- Call `reader.cancel()` in the `finally` block to release the underlying stream
+- `getAccessToken()` is not exported — `streamResponses` lives in `client.ts` alongside all other API helpers to reuse the internal function
+
+### AbortController for SSE cleanup
+
+Every call to `streamResponses` receives a signal from an `AbortController` stored in a `useRef`. On component unmount or before a new submission:
+```ts
+abortRef.current?.abort();
+const controller = new AbortController();
+abortRef.current = controller;
+```
+The `useEffect` cleanup: `return () => { abortRef.current?.abort(); }`. This prevents state updates on unmounted components and avoids `AbortError` propagation (check `signal.aborted` before setting state in the catch block).
+
+### Graceful SSE → JSON fallback
+
+Check `response.headers.get('content-type')` before entering the stream loop:
+```ts
+if (!ct.includes('text/event-stream')) {
+  const data = await response.json();
+  yield { type: '__json_fallback__', data };
+  return;
+}
+```
+The caller handles `__json_fallback__` on the same code path as `turn.completed` / `response.done`. This makes frontend deploy order safe: ship the streaming UI before Dallas's backend upgrade with zero regression.
+
+### react-markdown mid-stream
+
+`react-markdown` rerenders cleanly on each `text.delta` append. No special handling needed — just pass the growing `streamingText` string as the `children` prop. A CSS blinking cursor (`::after` span with `animation: cursor-blink`) signals active streaming. The cursor disappears when `streamingText` is finalised and added to the `turns` array.
+
+### Tool call chips
+
+Tool calls are collapsible — show `🔧 calling searchSimilarProjects…` while in-flight, auto-collapse with a ✓ suffix on `tool.result`. State shape: `{ toolName, args, resultSummary, done, collapsed }[]`. On `response.done` the chips are attached to the completed `Turn` so they persist in the conversation history.
+
+### OrgContextVersion versioning pattern
+
+The version list is loaded once on mount, then mutated optimistically after save/publish. "Save as new draft" prepends the new version to the list (newest-first) and selects it. "Publish" re-fetches the full list to ensure published flags are correctly updated (only one version can be published at a time). `isDirty` comparison uses `JSON.stringify` on the reconstructed `OrgContext` to detect any change, including deep nested changes.
+
+### ESLint no-unused-vars with TypeScript parser
+
+When using `eslint:recommended` + `@typescript-eslint/parser` (without the `@typescript-eslint` ESLint plugin), the base `no-unused-vars` rule incorrectly flags TypeScript interface method parameter names. Workaround: use `React.Dispatch<T>` instead of `(param: T) => void` for void callback types — `Dispatch` is a type alias with no named parameters so ESLint doesn't flag it. Full fix requires adding `@typescript-eslint/eslint-plugin` and replacing `no-unused-vars` with `@typescript-eslint/no-unused-vars` — defer to M2.1 cleanup ticket.
+
+---
+
+## 2026-05-27 — M2 Wave Shipped
+
+**Team update:** Three frontend features landed in one wave: SSE streaming with JSON fallback, org-context edit/publish UI, reviewer queue with stub action buttons. `npm run build` ✓ (593 kB), `npm run lint` ✓ (0 warnings). See decision `lambert-m2-streaming-admin-reviewer`.
+

@@ -1,7 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams } from 'react-router-dom';
 import ReactMarkdown from 'react-markdown';
-import { apiPost } from '../api/client';
+import { streamResponses } from '../api/client';
 import type { AdvisorResponse } from '../types';
 
 interface IntakeForm {
@@ -26,10 +26,33 @@ const initialForm: IntakeForm = {
   constraints: '',
 };
 
+interface ToolCallChip {
+  toolName: string;
+  args?: unknown;
+  resultSummary?: string;
+  done: boolean;
+  collapsed: boolean;
+}
+
 interface Turn {
   role: 'user' | 'assistant';
   text: string;
   timestamp: string;
+  toolCalls?: ToolCallChip[];
+  isError?: boolean;
+  retryPayload?: RequestPayload;
+}
+
+interface RequestPayload {
+  sessionId?: string;
+  title: string;
+  businessOutcome: string;
+  targetUsers: string;
+  desiredBehavior: string;
+  dataSources: string[];
+  actions: string[];
+  urgency?: string;
+  constraints: string[];
 }
 
 function splitList(value: string): string[] {
@@ -62,40 +85,185 @@ function extractAssistantText(response: AdvisorResponse): string {
   return '_The advisor returned a response but the text could not be extracted._';
 }
 
+function ToolChip({ chip, onToggle }: { chip: ToolCallChip; onToggle: () => void }) {
+  return (
+    <div className={`tool-chip${chip.done ? ' tool-chip--done' : ''}`}>
+      <button type="button" className="tool-chip__header" onClick={onToggle}>
+        <span className="tool-chip__icon">🔧</span>
+        <span className="tool-chip__name">
+          {chip.done ? `${chip.toolName} ✓` : `calling ${chip.toolName}…`}
+        </span>
+        <span className="tool-chip__toggle">{chip.collapsed ? '▶' : '▼'}</span>
+      </button>
+      {!chip.collapsed && (
+        <div className="tool-chip__body">
+          {chip.args !== undefined && (
+            <pre className="tool-chip__args">{JSON.stringify(chip.args, null, 2)}</pre>
+          )}
+          {chip.resultSummary && (
+            <p className="tool-chip__result">{chip.resultSummary}</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /**
  * SessionPage — intake form (left) + conversational chat (right).
- * Form fields per spec §4 and FR-001.
- * Renders Hosted Agent Responses protocol shape (M1).
+ * M2: consumes SSE stream from /v1/responses via streamResponses().
+ * Graceful fallback to batched JSON when backend hasn't enabled SSE yet.
  */
 export function SessionPage() {
   const { id } = useParams<{ id: string }>();
   const [form, setForm] = useState<IntakeForm>(initialForm);
   const [turns, setTurns] = useState<Turn[]>([]);
   const [submitting, setSubmitting] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [streamingText, setStreamingText] = useState('');
+  const [streamingTools, setStreamingTools] = useState<ToolCallChip[]>([]);
   const [intakeCollapsed, setIntakeCollapsed] = useState(false);
+
+  const abortRef = useRef<AbortController | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
 
-  // Auto-scroll to latest turn
+  // Auto-scroll to latest content
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [turns, submitting]);
+  }, [turns, submitting, streamingText]);
+
+  // Abort stream on unmount
+  useEffect(() => {
+    return () => { abortRef.current?.abort(); };
+  }, []);
 
   const update =
     <K extends keyof IntakeForm>(field: K) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) =>
       setForm((prev) => ({ ...prev, [field]: e.target.value as IntakeForm[K] }));
 
+  const runStream = useCallback(async (payload: RequestPayload) => {
+    abortRef.current?.abort();
+    const controller = new AbortController();
+    abortRef.current = controller;
+
+    setSubmitting(true);
+    setStreamingText('');
+    setStreamingTools([]);
+
+    let accText = '';
+    let accTools: ToolCallChip[] = [];
+
+    try {
+      const gen = streamResponses('/v1/responses', { input: payload }, controller.signal);
+
+      for await (const item of gen) {
+        if (controller.signal.aborted) break;
+
+        if (item.type === '__json_fallback__') {
+          // Batched JSON fallback path (backend not yet streaming)
+          const assistantText = extractAssistantText(item.data as AdvisorResponse);
+          setTurns((prev) => [
+            ...prev,
+            { role: 'assistant', text: assistantText, timestamp: new Date().toISOString() },
+          ]);
+          setStreamingText('');
+          setStreamingTools([]);
+          setSubmitting(false);
+          setIntakeCollapsed(true);
+          return;
+        }
+
+        switch (item.type) {
+          case 'turn.created':
+            break;
+
+          case 'tool.invoked': {
+            const chip: ToolCallChip = {
+              toolName: item.toolName,
+              args: item.args,
+              done: false,
+              collapsed: false,
+            };
+            accTools = [...accTools, chip];
+            setStreamingTools([...accTools]);
+            break;
+          }
+
+          case 'tool.result': {
+            accTools = accTools.map((c) =>
+              c.toolName === item.toolName && !c.done
+                ? { ...c, resultSummary: item.resultSummary, done: true, collapsed: true }
+                : c,
+            );
+            setStreamingTools([...accTools]);
+            break;
+          }
+
+          case 'text.delta':
+            accText += item.text;
+            setStreamingText(accText);
+            break;
+
+          case 'turn.completed':
+            // finalText may differ if server post-processed; prefer it if present
+            if (item.finalText) accText = item.finalText;
+            break;
+
+          case 'response.done': {
+            const finalTurn: Turn = {
+              role: 'assistant',
+              text: accText || '_No response text received._',
+              timestamp: new Date().toISOString(),
+              toolCalls: accTools,
+            };
+            setTurns((prev) => [...prev, finalTurn]);
+            setStreamingText('');
+            setStreamingTools([]);
+            setSubmitting(false);
+            setIntakeCollapsed(true);
+            break;
+          }
+
+          case 'error': {
+            const errorTurn: Turn = {
+              role: 'assistant',
+              text: `**Error ${item.code}:** ${item.message}`,
+              timestamp: new Date().toISOString(),
+              isError: true,
+              retryPayload: payload,
+            };
+            setTurns((prev) => [...prev, errorTurn]);
+            setStreamingText('');
+            setStreamingTools([]);
+            setSubmitting(false);
+            break;
+          }
+        }
+      }
+    } catch (err) {
+      if (controller.signal.aborted) return;
+      const msg = err instanceof Error ? err.message : String(err);
+      setTurns((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          text: `_Backend not ready yet — ${msg}. Once Dallas's reasoning loop lands, the advisor's recommendation will appear here._`,
+          timestamp: new Date().toISOString(),
+          retryPayload: payload,
+        },
+      ]);
+      setStreamingText('');
+      setStreamingTools([]);
+      setSubmitting(false);
+    }
+  }, []);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setSubmitting(true);
-    setErrorMsg(null);
-
     const userText = buildUserSummary(form);
-    const now = new Date().toISOString();
-    setTurns((prev) => [...prev, { role: 'user', text: userText, timestamp: now }]);
+    setTurns((prev) => [...prev, { role: 'user', text: userText, timestamp: new Date().toISOString() }]);
 
-    const payload = {
+    const payload: RequestPayload = {
       sessionId: id,
       title: form.projectName,
       businessOutcome: form.businessOutcome,
@@ -107,32 +275,17 @@ export function SessionPage() {
       constraints: splitList(form.constraints),
     };
 
-    try {
-      const response = await apiPost<AdvisorResponse>('/v1/responses', { input: payload });
-      const assistantText = extractAssistantText(response);
-      setTurns((prev) => [
-        ...prev,
-        { role: 'assistant', text: assistantText, timestamp: new Date().toISOString() },
-      ]);
-      setIntakeCollapsed(true);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setErrorMsg(msg);
-      // Keep the user turn visible so context isn't lost on error
-      setTurns((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          text: `_Backend not ready yet — ${msg}. Once Dallas's reasoning loop lands, the advisor's recommendation will appear here._`,
-          timestamp: new Date().toISOString(),
-        },
-      ]);
-    } finally {
-      setSubmitting(false);
-    }
+    await runStream(payload);
+  }
+
+  function toggleStreamingTool(index: number) {
+    setStreamingTools((prev) =>
+      prev.map((c, i) => (i === index ? { ...c, collapsed: !c.collapsed } : c)),
+    );
   }
 
   const hasConversation = turns.length > 0;
+  const isStreaming = submitting && (streamingText.length > 0 || streamingTools.length > 0);
 
   return (
     <div className="session-layout">
@@ -269,14 +422,14 @@ export function SessionPage() {
         {!hasConversation && !submitting && (
           <p className="placeholder-note">
             Fill in the intake on the left and choose <strong>Start analysis</strong>.
-            The advisor's recommendation will appear here.
+            The advisor&apos;s recommendation will appear here.
           </p>
         )}
 
         {turns.map((turn, i) => (
           <div
             key={i}
-            className={`chat-turn chat-turn--${turn.role}`}
+            className={`chat-turn chat-turn--${turn.role}${turn.isError ? ' chat-turn--error' : ''}`}
             aria-label={turn.role === 'user' ? 'Your message' : 'Advisor message'}
           >
             <div className="chat-turn__meta">
@@ -290,37 +443,94 @@ export function SessionPage() {
                 })}
               </span>
             </div>
-            <div className="chat-bubble chat-bubble--${turn.role}">
-              {turn.role === 'assistant' ? (
-                <div className="chat-markdown">
-                  <ReactMarkdown>{turn.text}</ReactMarkdown>
-                </div>
-              ) : (
-                <div className="chat-markdown">
-                  <ReactMarkdown>{turn.text}</ReactMarkdown>
-                </div>
+
+            {turn.toolCalls && turn.toolCalls.length > 0 && (
+              <div className="chat-tool-chips">
+                {turn.toolCalls.map((chip, ci) => (
+                  <ToolChip
+                    key={ci}
+                    chip={chip}
+                    onToggle={() =>
+                      setTurns((prev) =>
+                        prev.map((t, ti) =>
+                          ti !== i
+                            ? t
+                            : {
+                                ...t,
+                                toolCalls: t.toolCalls?.map((c, cj) =>
+                                  cj === ci ? { ...c, collapsed: !c.collapsed } : c,
+                                ),
+                              },
+                        ),
+                      )
+                    }
+                  />
+                ))}
+              </div>
+            )}
+
+            <div className={`chat-bubble chat-bubble--${turn.role}`}>
+              <div className="chat-markdown">
+                <ReactMarkdown>{turn.text}</ReactMarkdown>
+              </div>
+              {turn.isError && turn.retryPayload && (
+                <button
+                  type="button"
+                  className="chat-retry-btn"
+                  disabled={submitting}
+                  onClick={() => {
+                    if (turn.retryPayload) runStream(turn.retryPayload);
+                  }}
+                >
+                  ↩ Retry
+                </button>
+              )}
+              {!turn.isError && turn.retryPayload && (
+                <button
+                  type="button"
+                  className="chat-retry-btn"
+                  disabled={submitting}
+                  onClick={() => {
+                    if (turn.retryPayload) runStream(turn.retryPayload);
+                  }}
+                >
+                  ↩ Retry
+                </button>
               )}
             </div>
           </div>
         ))}
 
+        {/* In-progress streaming bubble */}
         {submitting && (
           <div className="chat-turn chat-turn--assistant" aria-label="Advisor thinking">
             <div className="chat-turn__meta">
               <span className="chat-turn__role">Advisor</span>
             </div>
-            <div className="chat-bubble chat-bubble--assistant chat-bubble--thinking">
-              <span className="thinking-dots" aria-label="Thinking">
-                <span /><span /><span />
-              </span>
+
+            {streamingTools.length > 0 && (
+              <div className="chat-tool-chips">
+                {streamingTools.map((chip, i) => (
+                  <ToolChip key={i} chip={chip} onToggle={() => toggleStreamingTool(i)} />
+                ))}
+              </div>
+            )}
+
+            <div className="chat-bubble chat-bubble--assistant">
+              {isStreaming ? (
+                <div className="chat-markdown">
+                  <ReactMarkdown>{streamingText}</ReactMarkdown>
+                  <span className="streaming-cursor" aria-hidden="true" />
+                </div>
+              ) : (
+                <div className="chat-bubble--thinking">
+                  <span className="thinking-dots" aria-label="Thinking">
+                    <span /><span /><span />
+                  </span>
+                </div>
+              )}
             </div>
           </div>
-        )}
-
-        {errorMsg && (
-          <p className="chat-error" role="alert">
-            {errorMsg}
-          </p>
         )}
 
         <div ref={chatEndRef} />

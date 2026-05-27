@@ -19,6 +19,22 @@ export function AdminLayout() {
             </li>
             <li>
               <NavLink
+                to="/admin/entitlements"
+                className={({ isActive }) => (isActive ? 'active' : undefined)}
+              >
+                Entitlements
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
+                to="/admin/custom-instructions"
+                className={({ isActive }) => (isActive ? 'active' : undefined)}
+              >
+                Custom Instructions
+              </NavLink>
+            </li>
+            <li>
+              <NavLink
                 to="/admin/requests"
                 className={({ isActive }) => (isActive ? 'active' : undefined)}
               >
