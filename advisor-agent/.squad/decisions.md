@@ -691,3 +691,34 @@ Wrote Layer 1 (backend contract tests) and Layer 2 (smoke script) for auth + `/v
 - Test status: 3 pass (health, valid token paths), 8 expected-fail (auth rejection paths, admin pass)
 
 ---
+
+### dallas-m1-reasoning-loop
+
+**By:** Dallas (Backend & Agent Developer)  
+**Date:** 2026-05-26  
+**Status:** ✅ COMPLETE — deployed to revision `advisor-agent-app--azd-1779839176`
+
+**Summary**
+
+Implemented the M1 advisor reasoning loop end-to-end. All routes live. POST /v1/responses returns a real GPT-4.1-mini recommendation. 18/18 tests pass.
+
+**Key Decisions**
+
+- **Copilot SDK fallback:** `@github/copilot-sdk@1.0.0-beta.8` is GitHub Copilot CLI JSON-RPC, not an Azure AI agent SDK. Fell back to `openai@^4.104.0` (AzureOpenAI class) with `azureADTokenProvider` for managed identity. FR-002 architectural intent met.
+- **AOAI tool calling:** 4 tools — `scoreBXT`, `searchSimilarProjects`, `recordReuseDecision`, `produceReadinessBrief`. Max 8-iteration agentic loop.
+- **System prompt:** Dynamic — built from active OrgContext + framework-anchors.json at call time (FR-024).
+- **Cosmos stores:** Full CRUD with createIfNotExists at boot (idempotent). ETag optimistic concurrency on `setStatusNew`. Transactional: `createRequest` called AFTER model succeeds — no orphaned Drafts on model failure.
+- **Azure AI Search:** Hybrid vector + BM25 + semantic re-rank on `system-inventory-v1`, filter `status eq 'active'`, top 5, confidence_score >= 0.5.
+- **502 vs 500:** Model/AOAI failures return 502 Bad Gateway; internal bugs return 500. Discovered via Brett's proactive Test 7 contract.
+- **Data files:** `data/framework-anchors.json` (BXT criteria + 9 questions), `data/org-context-default.json` (seed org context with M365/Copilot Studio/AOAI entitlements).
+
+**M1 Gap (Parker)**
+
+Container App MI needs `Cosmos DB Built-in Data Contributor` role on the `advisor` database. Without it, first Cosmos write returns 403. See decision file §D.
+
+**References**
+
+- Source: `.squad/decisions/inbox/dallas-m1-reasoning-loop.md`
+- Skill: `.squad/skills/aoai-direct-client-with-managed-identity/SKILL.md`
+- Commits: `9d32784`, `28d85cb`, `3ad0244`
+- Tests: 18 passed (11 auth-contract + 7 reasoning-loop)
