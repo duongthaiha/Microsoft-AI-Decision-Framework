@@ -6,6 +6,15 @@
  * between "Foundry knows how to host agents" and "AOAI client knows how to
  * run this advisor's reasoning loop."
  *
+ * M2 additions:
+ * - SSE streaming via `Accept: text/event-stream` content negotiation.
+ *   If the client sends that header, the route streams events as the advisor
+ *   reasons.  Otherwise it returns batched JSON (M1 behaviour unchanged).
+ *
+ * SSE event sequence:
+ *   turn.created → tool.invoked* → tool.result* → text.delta+ → turn.completed → response.done
+ *   (or `error` if something goes wrong mid-stream, then close)
+ *
  * Hosted Agent Responses protocol:
  * https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents
  *
@@ -16,10 +25,12 @@
 
 import { randomUUID } from "crypto";
 import { Router, type Request, type Response } from "express";
+import * as appInsights from "applicationinsights";
 import type { ISessionStore } from "../data/session-store.js";
 import type { IRequestStore } from "../data/request-store.js";
 import type { IProjectSearch } from "../search/project-index.js";
 import { runAdvisorLoop } from "../framework/advisor-loop.js";
+import type { SSELoopEvent } from "../framework/advisor-loop.js";
 import type { AzureOpenAI } from "openai";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { resolveCallerId } from "../auth/identity.js";
@@ -137,6 +148,7 @@ export function createResponsesAdapter(deps: ResponsesAdapterDeps): Router {
       const orgCtx = await deps.getOrgCtx();
 
       // Run advisor reasoning loop — wrap separately so failures return 502
+      const loopStartMs = Date.now();
       let loopResult;
       try {
         loopResult = await runAdvisorLoop(
@@ -196,6 +208,24 @@ export function createResponsesAdapter(deps: ResponsesAdapterDeps): Router {
         role: "assistant",
         content: loopResult.assistantText,
         timestamp: new Date().toISOString(),
+      });
+
+      // Emit custom telemetry: one event per completed reasoning loop.
+      appInsights.defaultClient?.trackEvent({
+        name: "requestProcessed",
+        properties: {
+          requestId: updatedRequest.requestId,
+          sessionId: sessionId as string,
+          durationMs: String(Date.now() - loopStartMs),
+          toolsInvoked: String(
+            (loopResult.bxtScore ? 1 : 0) +
+            (loopResult.searchMatches ? 1 : 0) +
+            (loopResult.reuseDecision ? 1 : 0) +
+            (loopResult.readinessBrief ? 1 : 0)
+          ),
+          finalGrouping: loopResult.readinessBrief?.recommendedPlatform.platformKey ?? "",
+          finalTech: loopResult.readinessBrief?.recommendedPlatform.displayName ?? "",
+        },
       });
 
       // Return Hosted Agent Responses protocol shape

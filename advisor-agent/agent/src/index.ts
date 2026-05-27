@@ -23,6 +23,19 @@
  * https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents
  */
 
+import * as appInsights from "applicationinsights";
+
+// Bootstrap App Insights BEFORE other SDK initialisation so auto-instrumentation
+// captures Express, outbound HTTP, and console.  Guard on env var so local dev
+// (without a connection string) doesn't error.
+if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
+  appInsights
+    .setup()
+    .setAutoCollectConsole(true, true)
+    .setAutoDependencyCorrelation(true)
+    .start();
+}
+
 import express from "express";
 import cors from "cors";
 import { existsSync, readFileSync } from "fs";

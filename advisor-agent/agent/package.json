@@ -18,6 +18,7 @@
     "@azure/openai": "^2.0.0",
     "@azure/search-documents": "^12.1.0",
     "@types/cors": "^2.8.19",
+    "applicationinsights": "^2.9.8",
     "cors": "^2.8.6",
     "express": "^4.19.2",
     "jose": "^6.2.3",
