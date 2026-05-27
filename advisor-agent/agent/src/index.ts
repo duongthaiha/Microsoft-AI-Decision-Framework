@@ -23,18 +23,12 @@
  * https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents
  */
 
-import * as appInsights from "applicationinsights";
-
-// Bootstrap App Insights BEFORE other SDK initialisation so auto-instrumentation
-// captures Express, outbound HTTP, and console.  Guard on env var so local dev
-// (without a connection string) doesn't error.
-if (process.env.APPLICATIONINSIGHTS_CONNECTION_STRING) {
-  appInsights
-    .setup()
-    .setAutoCollectConsole(true, true)
-    .setAutoDependencyCorrelation(true)
-    .start();
-}
+// Bootstrap Azure Monitor OTel distro FIRST — auto-instrumentation must be
+// registered before Express, Cosmos, fetch, or any instrumented import.
+// Guard is inside initTelemetry so this is safe in local dev (no-op without
+// APPLICATIONINSIGHTS_CONNECTION_STRING).
+import { initTelemetry } from "./telemetry/otel.js";
+initTelemetry();
 
 import express from "express";
 import cors from "cors";
@@ -51,11 +45,16 @@ import { AzureProjectSearch } from "./search/project-index.js";
 import { createAoaiClient } from "./framework/advisor-loop.js";
 import { getModelCredential } from "./auth/identity.js";
 import { jwtMiddleware, decodeTokenClaims } from "./auth/jwt-middleware.js";
+import { requestContextMiddleware } from "./middleware/request-context.js";
 import type { OrgContext, OrgContextVersion } from "./data/models.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const app = express();
 app.use(express.json());
+
+// Per-request context: assigns requestId + structured log on finish.
+// Mount after body parser so body is available, before CORS and JWT.
+app.use(requestContextMiddleware);
 
 // ---------------------------------------------------------------------------
 // CORS — MUST be mounted BEFORE jwtMiddleware.
@@ -158,16 +157,26 @@ if (aoaiEndpoint) {
   console.warn("  AOAI        : AOAI_ENDPOINT not set — reasoning loop disabled");
 }
 
-// Org Context loader — reads from Cosmos if available, else from seed file
+// Org Context loader — reads from Cosmos if available, else from seed file.
+// Short TTL cache (60s) reduces Cosmos RUs for every reasoning turn.
+// A fresh publish takes effect within one TTL window — acceptable for admin ops.
+const ORG_CTX_CACHE_TTL_MS = 60_000;
+let orgCtxCache: { value: OrgContext | null; expiresAt: number } | null = null;
+
 async function getOrgCtx(): Promise<OrgContext | null> {
-  // Per-request: call Cosmos store so freshly published versions take effect immediately
+  const now = Date.now();
+  if (orgCtxCache && now < orgCtxCache.expiresAt) {
+    return orgCtxCache.value;
+  }
   try {
     const published: OrgContextVersion | null = await orgContextStore.getPublished();
-    if (published) return published.content;
+    const value = published ? published.content : seedOrgContext;
+    orgCtxCache = { value, expiresAt: now + ORG_CTX_CACHE_TTL_MS };
+    return value;
   } catch {
-    // Fall through to seed file
+    // Fall through to seed on Cosmos error; do not cache failures
+    return seedOrgContext;
   }
-  return seedOrgContext;
 }
 
 // Null-safe stores (in case Cosmos is not configured)

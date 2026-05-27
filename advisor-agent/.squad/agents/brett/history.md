@@ -166,6 +166,60 @@ Flip Test 7 from [PROACTIVE] → [VERIFIED] once Dallas adds 502 handling.
 
 ---
 
+## M2 — Playwright SPA Smoke (`playwright-spa-smoke`) (2026-05-27)
+
+### Learnings
+
+**MSAL cache key shape (MSAL Browser v3.x, `@azure/msal-browser` 3.30.0):**
+- Cache prefix constant: `"msal"` (from `Constants.CACHE_PREFIX` in `@azure/msal-common`)
+- Account list key: `msal.account.keys`
+- Token list key: `msal.token.keys.{clientId}`
+- Account entry key: `{homeAccountId}-login.microsoftonline.com-{tenantId}`
+  - Where `homeAccountId` = `{oid}.{tenantId}` for user tokens
+- Access token entry key: `{homeAccountId}-login.microsoftonline.com-accesstoken-{clientId}-{tenantId}-{normalizedScopes}--`
+- This format changed between MSAL v2 (used `msal.{clientId}.{...}`) and v3 — always pin version before relying on cache injection.
+- `storeAuthStateInCookie: false` is set in msal-config.ts — all state is in sessionStorage only.
+
+**SP auth approach chosen (route-fixture):**
+- Used `VITE_ADVISOR_DEMO_MODE=true` build to bypass MSAL popup for UI tests (RequireAuth short-circuits).
+- For live-API CI: `@azure/msal-node` `ConfidentialClientApplication.acquireTokenByClientCredential()` acquires a Bearer token in `globalSetup.ts`. Playwright `page.route('**/api/**', ...)` injects the `Authorization: Bearer` header on all outbound API calls.
+- Token stored at `e2e/.auth/token.json` (gitignored). Tests read via fixture.
+- **Gotcha**: Client-credentials tokens carry `roles` claim, NOT `scp`. Dallas's JWT middleware currently only accepts `scp=access_as_user`. Must add `roles` branch before live mode can pass. Logged as `[PROACTIVE]` in decisions inbox.
+
+**Other gotchas:**
+- `vite preview` does NOT activate the vite proxy — `/api/*` calls 404 unless `VITE_API_BASE_URL` is set or Playwright mocks them.
+- `AppHeader` returns `null` in demo mode — so "no sign-in button" test is a clean negative assertion.
+- `RequireAdmin` always renders 403 in demo mode regardless of token — correct for smoke scenario 5.
+- `@azure/msal-node` should be a devDependency but can be omitted in mock-mode runs (dynamic import with graceful error).
+- `page.route()` pattern `'**/api/**'` matches both `/api/sessions` and `/api/v1/responses` — confirm with your BASE_URL; if VITE_API_BASE_URL is a full origin, use `${API_BASE_URL}/**` as the pattern.
+
+**Skill published:** `.squad/skills/playwright-msal-bypass/SKILL.md` — three-approach matrix for Playwright + MSAL bypass (demo mode / SP Bearer injection / sessionStorage cache injection).
+
+### Files delivered
+
+| File | Notes |
+|------|-------|
+| `web/playwright.config.ts` | Local webServer + SPA_BASE_URL env support |
+| `web/e2e/global-setup.ts` | SP client credentials token acquisition |
+| `web/e2e/fixtures.ts` | authPage fixture (mock or live mode) |
+| `web/e2e/spa-smoke.spec.ts` | 5 smoke tests, all AC-mapped |
+| `web/e2e/.auth/.gitignore` | Prevents token.json commit |
+| `.github/workflows/playwright-smoke.yml` | CI workflow (workflow_dispatch) |
+| `.squad/decisions/inbox/brett-playwright-spa-smoke.md` | Full decision + Entra prereqs + az CLI commands |
+| `.squad/skills/playwright-msal-bypass/SKILL.md` | Reusable pattern |
+
+### Open items for Parker
+
+1. Add `Advisor.Smoke` application role to the API app registration.
+2. Create `advisor-agent-smoke-test` SP and grant it `Advisor.Smoke`.
+3. Set GitHub secrets: `E2E_SP_CLIENT_ID`, `E2E_SP_CLIENT_SECRET`, `E2E_SP_TENANT_ID`, `SPA_BASE_URL`, `API_BASE_URL`.
+
+### Open item for Dallas
+
+- JWT middleware: add `roles contains Advisor.Smoke` acceptance branch alongside `scp=access_as_user`. Otherwise live-mode CI tests will 403 even with a valid SP token.
+
+---
+
 ## 2026-05-27 — M1 Test Suite Shipped
 
 **Team update:** 7 integration tests + smoke script extensions landed (17/18 passing, 1 proactive contract gap). See decision #267 `brett-m1-reasoning-loop-tests`. Proactive gap: Dallas should return 502 for model errors (not 500). Smoke script needs Check 4 update to accept 201.

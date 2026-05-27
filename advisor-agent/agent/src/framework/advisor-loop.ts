@@ -215,6 +215,8 @@ export interface AdvisorLoopResult {
   reuseDecision?: ReuseGateDecision;
   readinessBrief?: ReadinessBrief;
   orgContextVersion: string;
+  /** Accumulated AOAI token usage across all loop iterations (non-streaming only). */
+  tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number };
 }
 
 // ---------------------------------------------------------------------------
@@ -337,16 +339,24 @@ export async function runAdvisorLoop(
   const result: AdvisorLoopResult = {
     assistantText: "",
     orgContextVersion: deps.orgCtx?.version ?? "none",
+    tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
   };
 
   // Agentic loop — max 8 iterations to prevent runaway tool calls
   for (let i = 0; i < 8; i++) {
-    const { content, tool_calls } = await callModelIteration(
+    const { content, tool_calls, usage } = await callModelIteration(
       deps.aoaiClient,
       deps.deployment,
       messages,
       deps.onEvent
     );
+
+    // Accumulate token usage across iterations (non-streaming only; streaming returns undefined)
+    if (usage && result.tokenUsage) {
+      result.tokenUsage.promptTokens += usage.prompt_tokens ?? 0;
+      result.tokenUsage.completionTokens += usage.completion_tokens ?? 0;
+      result.tokenUsage.totalTokens += usage.total_tokens ?? 0;
+    }
 
     const assistantToolCalls = tool_calls && tool_calls.length > 0 ? tool_calls : undefined;
     messages.push({
@@ -392,7 +402,7 @@ async function callModelIteration(
   deployment: string,
   messages: ChatCompletionMessageParam[],
   onEvent?: (event: SSELoopEvent) => void
-): Promise<{ content: string | null; tool_calls?: ChatCompletionMessageToolCall[] }> {
+): Promise<{ content: string | null; tool_calls?: ChatCompletionMessageToolCall[]; usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number } }> {
   const baseParams = {
     model: deployment,
     messages,
@@ -445,13 +455,20 @@ async function callModelIteration(
 
     return { content: accContent || null, tool_calls };
   } else {
-    // Non-streaming path (original behaviour)
+    // Non-streaming path — response.usage is available here
     const response = await client.chat.completions.create(baseParams);
     const choice = response.choices[0];
     if (!choice) return { content: null };
     return {
       content: choice.message.content,
       tool_calls: choice.message.tool_calls,
+      usage: response.usage
+        ? {
+            prompt_tokens: response.usage.prompt_tokens,
+            completion_tokens: response.usage.completion_tokens,
+            total_tokens: response.usage.total_tokens,
+          }
+        : undefined,
     };
   }
 }

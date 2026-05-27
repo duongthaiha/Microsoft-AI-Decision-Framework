@@ -132,13 +132,30 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Check 6: APPLICATIONINSIGHTS_CONNECTION_STRING set on active ACA revision
+# ---------------------------------------------------------------------------
+info "Check 6 — APPLICATIONINSIGHTS_CONNECTION_STRING set on ACA revision"
+CONTAINER_APP_NAME="${CONTAINER_APP_NAME:-advisor-agent-app}"
+AI_CONN_STR=$(az containerapp revision list \
+  --name "$CONTAINER_APP_NAME" \
+  --resource-group "$RG" \
+  --query "[?properties.active==\`true\`] | [0].properties.template.containers[0].env[?name=='APPLICATIONINSIGHTS_CONNECTION_STRING'].value" \
+  -o tsv 2>/dev/null || echo "")
+
+if [[ -n "$AI_CONN_STR" ]]; then
+  pass "APPLICATIONINSIGHTS_CONNECTION_STRING is set on active revision (${AI_CONN_STR:0:30}...)"
+else
+  fail "APPLICATIONINSIGHTS_CONNECTION_STRING is NOT set on active revision — App Insights telemetry will be silent. Re-run: azd deploy"
+fi
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 TOTAL=$((PASS + FAIL))
 if [[ $FAIL -eq 0 ]]; then
-  echo -e "${GREEN}  ALL $TOTAL CHECKS PASSED — private networking is healthy.${RESET}"
+  echo -e "${GREEN}  ALL $TOTAL CHECKS PASSED — private networking and observability are healthy.${RESET}"
 else
   echo -e "${RED}  $FAIL/$TOTAL CHECKS FAILED${RESET}  ($PASS passed)"
   echo ""

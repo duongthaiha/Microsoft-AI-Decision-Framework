@@ -149,6 +149,36 @@ resource orgContextContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases
   }
 }
 
+// org_contexts — versioned Organisation Context container (FR-024, M2).
+// Partition key /id: each version document is its own partition (single-tenant MVP).
+// The code-side store (CosmosOrgContextVersionStore) uses this container name.
+// Note: the legacy org-context container above is retained for backward compat
+// but the versioning store exclusively uses org_contexts.
+resource orgContextVersionsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2023-11-15' = {
+  parent: advisorDatabase
+  name: 'org_contexts'
+  properties: {
+    resource: {
+      id: 'org_contexts'
+      partitionKey: {
+        paths: ['/id']
+        kind: 'Hash'
+      }
+      indexingPolicy: {
+        indexingMode: 'consistent'
+        automatic: true
+        includedPaths: [
+          { path: '/version/?' }
+          { path: '/published/?' }
+        ]
+        excludedPaths: [
+          { path: '/"_etag"/?' }
+        ]
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Outputs
 // ---------------------------------------------------------------------------

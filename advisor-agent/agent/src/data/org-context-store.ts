@@ -125,6 +125,8 @@ export class CosmosOrgContextVersionStore implements IOrgContextVersionStore {
     const doc: OrgContextVersion = {
       id,
       version: nextVersion,
+      createdAt: now,
+      createdBy: author,
       publishedAt: "",
       publishedBy: author,
       published: false,

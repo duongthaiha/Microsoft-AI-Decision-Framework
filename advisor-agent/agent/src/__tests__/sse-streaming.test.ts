@@ -170,7 +170,8 @@ class InMemoryOrgContextVersionStore implements IOrgContextVersionStore {
   async createDraft(content: OrgContext, author: { oid: string; name: string }): Promise<OrgContextVersion> {
     const version = ++this.n;
     const id = `org-ctx-v${version}`;
-    const doc: OrgContextVersion = { id, version, publishedAt: '', publishedBy: author, published: false, content };
+    const now = new Date().toISOString();
+    const doc: OrgContextVersion = { id, version, createdAt: now, createdBy: author, publishedAt: '', publishedBy: author, published: false, content };
     this.map.set(id, doc);
     return doc;
   }

@@ -25,7 +25,13 @@
 
 import { randomUUID } from "crypto";
 import { Router, type Request, type Response } from "express";
-import * as appInsights from "applicationinsights";
+import {
+  getReasoningLatencyHistogram,
+  getTokenInputCounter,
+  getTokenOutputCounter,
+  getTracer,
+} from "../telemetry/otel.js";
+import { SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import type { ISessionStore } from "../data/session-store.js";
 import type { IRequestStore } from "../data/request-store.js";
 import type { IProjectSearch } from "../search/project-index.js";
@@ -76,6 +82,17 @@ export function createResponsesAdapter(deps: ResponsesAdapterDeps): Router {
       const { ownerId } = resolveCallerId(req);
       const { title } = req.body ?? {};
       const session = await deps.sessionStore.createSession(ownerId, title ?? "New Session");
+
+      // Custom event: session lifecycle telemetry
+      const tracer = getTracer();
+      const span = tracer.startSpan("session.created", { kind: SpanKind.INTERNAL });
+      span.setAttributes({
+        "session.id": session.sessionId,
+        "user.oid": ownerId,
+        "request.id": req.requestId ?? "",
+      });
+      span.end();
+
       res.status(201).json(session);
     } catch (err) {
       handleError(err, res);
@@ -169,6 +186,18 @@ async function handleResponsesBatch(
         timestamp: new Date().toISOString(),
       });
 
+      // Custom event: message received in session
+      {
+        const span = getTracer().startSpan("session.message", { kind: SpanKind.INTERNAL });
+        span.setAttributes({
+          "session.id": sessionId as string,
+          "user.oid": ownerId,
+          "message.role": "user",
+          "request.id": req.requestId ?? "",
+        });
+        span.end();
+      }
+
       // Load org context
       const orgCtx = await deps.getOrgCtx();
 
@@ -207,23 +236,40 @@ async function handleResponsesBatch(
         timestamp: new Date().toISOString(),
       });
 
-      // Emit custom telemetry: one event per completed reasoning loop.
-      appInsights.defaultClient?.trackEvent({
-        name: "requestProcessed",
-        properties: {
-          requestId: updatedRequest.requestId,
-          sessionId: sessionId as string,
-          durationMs: String(Date.now() - loopStartMs),
-          toolsInvoked: String(
-            (loopResult.bxtScore ? 1 : 0) +
-            (loopResult.searchMatches ? 1 : 0) +
-            (loopResult.reuseDecision ? 1 : 0) +
-            (loopResult.readinessBrief ? 1 : 0)
-          ),
-          finalGrouping: loopResult.readinessBrief?.recommendedPlatform.platformKey ?? "",
-          finalTech: loopResult.readinessBrief?.recommendedPlatform.displayName ?? "",
-        },
+      // ── OTel metrics: latency + token usage ──────────────────────────
+      const loopDurationMs = Date.now() - loopStartMs;
+      const tokenUsage = loopResult.tokenUsage;
+
+      getReasoningLatencyHistogram().record(loopDurationMs, {
+        model: deps.aoaiDeployment,
+        sessionId: sessionId as string,
       });
+      if (tokenUsage?.promptTokens) {
+        getTokenInputCounter().add(tokenUsage.promptTokens, { model: deps.aoaiDeployment });
+      }
+      if (tokenUsage?.completionTokens) {
+        getTokenOutputCounter().add(tokenUsage.completionTokens, { model: deps.aoaiDeployment });
+      }
+
+      // ── OTel span: requestProcessed ────────────────────────────────
+      const tracer = getTracer();
+      const span = tracer.startSpan("requestProcessed", {
+        kind: SpanKind.INTERNAL,
+        startTime: loopStartMs,
+      });
+      span.setAttributes({
+        "request.id": req.requestId ?? "",
+        "session.id": sessionId as string,
+        "user.oid": resolveCallerId(req).ownerId,
+        "model": deps.aoaiDeployment,
+        "latency.ms": loopDurationMs,
+        "token.prompt": tokenUsage?.promptTokens ?? 0,
+        "token.completion": tokenUsage?.completionTokens ?? 0,
+        "final.grouping": loopResult.readinessBrief?.recommendedPlatform.platformKey ?? "",
+        "final.tech": loopResult.readinessBrief?.recommendedPlatform.displayName ?? "",
+      });
+      span.setStatus({ code: SpanStatusCode.OK });
+      span.end();
 
       // Return Hosted Agent Responses protocol shape
       const responseId = `resp_${randomUUID().replace(/-/g, "")}`;
@@ -336,6 +382,7 @@ async function handleResponsesSSE(
     const orgCtx = await deps.getOrgCtx();
 
     // Run advisor reasoning loop with SSE event forwarding
+    const loopStartMs = Date.now();
     let loopResult;
     try {
       loopResult = await runAdvisorLoop(
@@ -366,6 +413,22 @@ async function handleResponsesSSE(
       finalText: loopResult.assistantText,
       usage: { orgContextVersion: loopResult.orgContextVersion },
     });
+
+    // ── OTel metrics: latency + token usage (SSE path) ─────────────
+    const loopDurationMs = Date.now() - loopStartMs;
+    const tokenUsage = loopResult.tokenUsage;
+
+    getReasoningLatencyHistogram().record(loopDurationMs, {
+      model: deps.aoaiDeployment,
+      sessionId: sessionId as string,
+      path: "sse",
+    });
+    if (tokenUsage?.promptTokens) {
+      getTokenInputCounter().add(tokenUsage.promptTokens, { model: deps.aoaiDeployment });
+    }
+    if (tokenUsage?.completionTokens) {
+      getTokenOutputCounter().add(tokenUsage.completionTokens, { model: deps.aoaiDeployment });
+    }
 
     // Persist request record and assistant turn
     let requestId: string;

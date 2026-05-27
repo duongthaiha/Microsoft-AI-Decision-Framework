@@ -7,6 +7,36 @@
 
 ## Active Learnings (M2+)
 
+### 2026-05-27 — Admin Write API: Org-Context Versioning (FR-024, M2)
+
+**What was built:**
+- `OrgContextVersion` model extended with `createdAt` / `createdBy` audit fields.
+- `CosmosOrgContextVersionStore.createDraft()` stamps `createdAt`/`createdBy` from author param + server time.
+- Admin API routes: `POST /admin/org-context` (create draft), `PUT /admin/org-context/:id/publish` (publish), `GET /admin/org-context` (list all), `GET /admin/org-context/published` (get active version envelope). Legacy `/versions` routes preserved for backward compat.
+- Body validation helper `validateOrgContextBody()` gates required fields on POST.
+- Bicep: added `org_contexts` container (partition key `/id`, indexed on `/version/?` and `/published/?`) alongside existing `org-context` container.
+- OrgCtx TTL cache (60s) in `getOrgCtx()` — reduces Cosmos RUs on hot path while keeping publish latency ≤60s.
+- 10 new contract tests in `admin-write-contract.test.ts` (AW-1 through AW-10): 401, 403, 201 draft, 400 validation, publish atomicity, GET /published semantics. All 48 tests pass.
+
+**Publish atomicity invariant:**
+Cosmos transactional batch requires same partition key — each version is its own `/id` partition, so cross-partition batch is not possible. Read-modify-write loop is correct for single-org, rare admin operation. Documented in `.squad/skills/cosmos-atomic-publish/SKILL.md`. If concurrent publish becomes a real concern (M4+), refactor to `/orgId` partition key + transactional batch.
+
+**Container naming note:**
+`org_contexts` (underscore) is the versioning container. `org-context` (hyphen, legacy) remains but is unused by the versioning store. Parker's Bicep now has both. The versioning store creates the container via `createIfNotExists` on first use, so it's safe before next AZD deploy.
+
+**Lambert contract:**
+Full request/response shapes written to `.squad/decisions/inbox/dallas-admin-write-contract.md`. Key point: field is `published` (bool), not `isPublished` (task spec alias). Wire format uses `published`.
+
+**Version-conflict edge cases found:**
+- Two admins publishing simultaneously: last write wins. Window is ~100ms. Acceptable for MVP single-admin-per-org assumption.
+- If `createDraft` is called during `publish` loop: the new draft has `published=false` and is safely ignored by the un-publish pass.
+- Cosmos error mid-publish loop: if step 2 (un-publish old) succeeds but step 3 (publish target) fails, the old version remains un-published and the target stays as draft. Admin retries the PUT call. No stuck-published state is possible — only stuck-unpublished (safe).
+
+**Decisions:** `.squad/decisions/inbox/dallas-admin-backend-write.md`, `.squad/decisions/inbox/dallas-admin-write-contract.md`  
+**Skill:** `.squad/skills/cosmos-atomic-publish/SKILL.md`
+
+---
+
 ### 2026-05-27 — Dual-Audience JWT Validation (bare GUID vs api:// URI)
 
 **Root cause of persistent `GET /sessions` 401 after dual-issuer fix:**

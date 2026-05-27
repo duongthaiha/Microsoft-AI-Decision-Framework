@@ -203,3 +203,33 @@ See decision record: `dallas-401-deep-dive-audience-fix` in decisions.md
 ### 2026-05-27 — Private Networking & Wave-1 Infrastructure Fix (Archived to decisions.md)
 
 Permanent private networking solution (VNet 10.0.0.0/22, private endpoints, policy-aligned Cosmos config, new CAE) has been archived to `.squad/decisions.md::parker-private-networking` for future infrastructure decisions and M3 follow-ups (AOAI PE, ACR Premium). CAE migration broke FQDN — VITE_API_BASE_URL updated by Coordinator.
+
+---
+
+## 2026-05-27T10:45:28Z — M2 Observability Wiring
+
+## Learnings
+
+### App Insights Wiring Approach
+Infra was already correct from M0/M1: `infra/modules/monitoring.bicep` had workspace-based App Insights + Log Analytics; `container-apps.bicep` already injected `APPLICATIONINSIGHTS_CONNECTION_STRING`. Zero Bicep changes needed for M2 observability.
+
+### OTel Package Choice
+Migrated from `applicationinsights@^2.9.8` (classic SDK) to `@azure/monitor-opentelemetry@^1.18.0` (OTel distro) + `@opentelemetry/api@^1.9.1`. The distro is the Microsoft-recommended path — auto-instruments Express, outbound HTTP, and Node.js core with zero per-call code.
+
+**Critical gotcha:** `useAzureMonitor()` must be called BEFORE importing Express and any instrumented SDK. In ESM projects, a dedicated `src/telemetry/otel.ts` module that is imported first (with `initTelemetry()` called at the very top of `index.ts`) is the clean pattern. This is the ESM equivalent of `applicationinsights.setup().start()` at CJS file top.
+
+### Custom Events vs Custom Metrics in OTel
+`@azure/monitor-opentelemetry` does NOT expose `TelemetryClient.trackEvent()`. Custom events are emitted as OTel spans (`kind: INTERNAL`) which appear in App Insights `dependencies` table (queryable by span name). Custom metrics use the `@opentelemetry/api` Meter API and appear in `customMetrics`. Adjusted KQL queries to use `dependencies` instead of `customEvents`.
+
+### Token Usage Collection
+`AdvisorLoopResult.tokenUsage` added — accumulates prompt/completion tokens across all agentic loop iterations. Available in non-streaming (batch) path only. Streaming path does not return per-iteration usage (AOAI requires `stream_options: { include_usage: true }` — deferred to M3).
+
+### Structured Logging Pattern
+Request-context middleware (`src/middleware/request-context.ts`) assigns UUID `requestId` per request, propagates it via `X-Request-Id` header, and emits a JSON log line to stdout on response finish. Log Analytics (via CAE stdout ingestion) captures these. Field schema: `event`, `requestId`, `method`, `route`, `status`, `latencyMs`, `userId` (Entra OID).
+
+### Smoke Check
+`scripts/post-deploy-smoke.sh` Check 6 added: queries ACA active revision env vars via `az containerapp revision list` to assert `APPLICATIONINSIGHTS_CONNECTION_STRING` is set. Catches silent telemetry failures from missed `azd deploy`.
+
+**Files changed:** `agent/package.json`, `agent/src/index.ts`, `agent/src/adapter/responses.ts`, `agent/src/admin/admin-api.ts`, `agent/src/framework/advisor-loop.ts`, `scripts/post-deploy-smoke.sh`  
+**Files created:** `agent/src/telemetry/otel.ts`, `agent/src/middleware/request-context.ts`, `agent/src/__tests__/observability.test.ts`, `.squad/decisions/inbox/parker-observability.md`, `.squad/skills/azure-monitor-otel-node/SKILL.md`  
+**Test result:** 48/48 pass (34 existing + 4 new observability tests)

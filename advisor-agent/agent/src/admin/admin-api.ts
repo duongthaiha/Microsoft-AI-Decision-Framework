@@ -9,11 +9,14 @@
  * the resource accessed, and any filter parameters (FR-028, §11 Audit logging).
  *
  * Routes:
- *   GET  /admin/org-context                        — read active Organisation Context
- *   GET  /admin/org-context/versions               — list all versions (desc)
+ *   GET  /admin/org-context                        — list all versions (desc)
+ *   GET  /admin/org-context/published              — get the currently published version envelope
+ *   GET  /admin/org-context/versions               — list all versions (desc) [legacy alias]
  *   GET  /admin/org-context/versions/:id           — get one version
- *   POST /admin/org-context/versions               — create draft version
- *   POST /admin/org-context/versions/:id/publish   — publish a version
+ *   POST /admin/org-context                        — create draft version
+ *   POST /admin/org-context/versions               — create draft version [legacy alias]
+ *   PUT  /admin/org-context/:id/publish            — publish a version (REST-idiomatic)
+ *   POST /admin/org-context/versions/:id/publish   — publish a version [legacy alias]
  *   GET  /admin/requests             — list all Requests (cross-partition, AdvisorAdmin only)
  *   GET  /admin/requests/:id         — Request detail (readiness brief, alignment notes)
  *   GET  /admin/projects             — list all Projects
@@ -29,6 +32,8 @@
 
 import { Router, type Request, type Response } from "express";
 import { requireRole } from "../auth/jwt-middleware.js";
+import { getTracer } from "../telemetry/otel.js";
+import { SpanKind } from "@opentelemetry/api";
 import type { IOrgContextVersionStore } from "../data/org-context-store.js";
 import type { OrgContext } from "../data/models.js";
 
@@ -59,20 +64,105 @@ export function createAdminRouter(deps: AdminRouterDeps = {}): Router {
 
   /**
    * GET /admin/org-context
-   * Returns the active (published) Organisation Context content.
-   * Falls back to the seed JSON if no published version exists yet.
+   * Lists all versions ordered by version DESC.
+   * Falls back to wrapped seed when no store is configured.
    */
   router.get("/org-context", async (req: Request, res: Response) => {
     const adminId = req.user?.oid ?? "unknown";
     console.log(`[admin-api] GET /org-context  adminId=${adminId}`);
-    try {
-      if (deps.orgContextStore) {
-        const published = await deps.orgContextStore.getPublished();
-        if (published) return res.json(published.content);
+    if (!deps.orgContextStore) {
+      // No store — return seed as a synthetic single-item list
+      if (deps.seedOrgContext) {
+        return res.json({ versions: [{ id: "seed", version: 0, published: true, content: deps.seedOrgContext }] });
       }
-      // Fall back to seed
-      if (deps.seedOrgContext) return res.json(deps.seedOrgContext);
+      return res.status(503).json({ error: "Org context store not configured" });
+    }
+    try {
+      const versions = await deps.orgContextStore.listAll();
+      return res.json({ versions });
+    } catch (err) {
+      return handleAdminError(err, res);
+    }
+  });
+
+  /**
+   * GET /admin/org-context/published
+   * Returns the full OrgContextVersion envelope for the currently published version.
+   * This is the canonical endpoint for Lambert to read before rendering the admin form.
+   * Falls back to a seed envelope if no published version exists.
+   */
+  router.get("/org-context/published", async (req: Request, res: Response) => {
+    const adminId = req.user?.oid ?? "unknown";
+    console.log(`[admin-api] GET /org-context/published  adminId=${adminId}`);
+    if (!deps.orgContextStore) {
+      if (deps.seedOrgContext) {
+        return res.json({ id: "seed", version: 0, published: true, content: deps.seedOrgContext });
+      }
       return res.status(404).json({ error: "No published org context found" });
+    }
+    try {
+      const published = await deps.orgContextStore.getPublished();
+      if (!published) {
+        return res.status(404).json({ error: "No published org context found" });
+      }
+      return res.json(published);
+    } catch (err) {
+      return handleAdminError(err, res);
+    }
+  });
+
+  /**
+   * POST /admin/org-context
+   * Creates a new DRAFT version (published=false).
+   * Body: OrgContext document — all required fields validated.
+   * This is the primary write endpoint; /versions is retained for backward compat.
+   */
+  router.post("/org-context", async (req: Request, res: Response) => {
+    const adminId = req.user?.oid ?? "unknown";
+    const adminName = req.user?.name ?? "Admin";
+    console.log(`[admin-api] POST /org-context  adminId=${adminId}`);
+    if (!deps.orgContextStore) {
+      return res.status(503).json({ error: "Org context store not configured" });
+    }
+    try {
+      const content = req.body as OrgContext;
+      const validationError = validateOrgContextBody(content);
+      if (validationError) {
+        return res.status(400).json({ error: validationError });
+      }
+      const draft = await deps.orgContextStore.createDraft(content, { oid: adminId, name: adminName });
+      return res.status(201).json(draft);
+    } catch (err) {
+      return handleAdminError(err, res);
+    }
+  });
+
+  /**
+   * PUT /admin/org-context/:id/publish
+   * Marks the given version as published=true; atomically un-publishes the
+   * previously published version (read-modify-write loop — see org-context-store.ts).
+   * Stamps publishedAt from server time, publishedBy from JWT oid.
+   */
+  router.put("/org-context/:id/publish", async (req: Request, res: Response) => {
+    const adminId = req.user?.oid ?? "unknown";
+    const { id } = req.params;
+    console.log(`[admin-api] PUT /org-context/${id}/publish  adminId=${adminId}`);
+    if (!deps.orgContextStore) {
+      return res.status(503).json({ error: "Org context store not configured" });
+    }
+    try {
+      const published = await deps.orgContextStore.publish(id);
+
+      // Custom event: org context version published
+      const span = getTracer().startSpan("org_context.published", { kind: SpanKind.INTERNAL });
+      span.setAttributes({
+        "org_context.version_id": id,
+        "org_context.version": String(published.version ?? ""),
+        "admin.oid": adminId,
+      });
+      span.end();
+
+      return res.json(published);
     } catch (err) {
       return handleAdminError(err, res);
     }
@@ -120,6 +210,7 @@ export function createAdminRouter(deps: AdminRouterDeps = {}): Router {
   /**
    * POST /admin/org-context/versions
    * Body: OrgContext — creates a new draft version (published=false).
+   * Legacy alias for POST /admin/org-context.
    */
   router.post("/org-context/versions", async (req: Request, res: Response) => {
     const adminId = req.user?.oid ?? "unknown";
@@ -130,8 +221,9 @@ export function createAdminRouter(deps: AdminRouterDeps = {}): Router {
     }
     try {
       const content = req.body as OrgContext;
-      if (!content || typeof content !== "object") {
-        return res.status(400).json({ error: "Request body must be an OrgContext document" });
+      const validationError = validateOrgContextBody(content);
+      if (validationError) {
+        return res.status(400).json({ error: validationError });
       }
       const draft = await deps.orgContextStore.createDraft(content, { oid: adminId, name: adminName });
       return res.status(201).json(draft);
@@ -153,6 +245,16 @@ export function createAdminRouter(deps: AdminRouterDeps = {}): Router {
     }
     try {
       const published = await deps.orgContextStore.publish(id);
+
+      // Custom event: org context version published (legacy alias)
+      const span = getTracer().startSpan("org_context.published", { kind: SpanKind.INTERNAL });
+      span.setAttributes({
+        "org_context.version_id": id,
+        "org_context.version": String(published.version ?? ""),
+        "admin.oid": adminId,
+      });
+      span.end();
+
       return res.json(published);
     } catch (err) {
       return handleAdminError(err, res);
@@ -227,4 +329,32 @@ function handleAdminError(err: unknown, res: Response): Response {
   if (code === 404) return res.status(404).json({ error: "Not found" });
   if (code === 503) return res.status(503).json({ error: "Service unavailable" });
   return res.status(500).json({ error: "Internal server error" });
+}
+
+// ---------------------------------------------------------------------------
+// Body validation helper
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates that the request body contains the minimum required fields for an
+ * OrgContext document.  Returns an error string if invalid, or null if valid.
+ */
+function validateOrgContextBody(body: unknown): string | null {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return "Request body must be an OrgContext document";
+  }
+  const ctx = body as Record<string, unknown>;
+  if (!ctx.orgId || typeof ctx.orgId !== "string") {
+    return "OrgContext.orgId is required and must be a string";
+  }
+  if (!Array.isArray(ctx.systemInventory)) {
+    return "OrgContext.systemInventory must be an array";
+  }
+  if (!Array.isArray(ctx.entitlements)) {
+    return "OrgContext.entitlements must be an array";
+  }
+  if (!Array.isArray(ctx.customInstructions)) {
+    return "OrgContext.customInstructions must be an array";
+  }
+  return null;
 }

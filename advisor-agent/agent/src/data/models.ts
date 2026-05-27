@@ -272,17 +272,25 @@ export interface OrgContext {
  * A versioned snapshot of the Organisation Context stored in the `org_contexts`
  * Cosmos container.  Only one version may have `published = true` at a time;
  * the advisor loads the published version on every reasoning turn.
+ *
+ * Field mapping note: the task spec uses `isPublished`; this interface uses
+ * `published` for consistency with the existing data layer and tests.
+ * Lambert's API contract doc maps `published` → `isPublished` in the response shape.
  */
 export interface OrgContextVersion {
   /** Cosmos document id — e.g. "org-ctx-v3". Also the partition key. */
   id: string;
   /** Monotonically increasing integer version number. */
   version: number;
-  /** ISO-8601 timestamp set when published=true. */
+  /** ISO-8601 timestamp set when the draft was first created. */
+  createdAt: string;
+  /** Entra identity of the admin who created this draft. */
+  createdBy: { oid: string; name: string };
+  /** ISO-8601 timestamp set when published=true. Empty string while still a draft. */
   publishedAt: string;
   /** Entra identity of the admin who last published this version. */
   publishedBy: { oid: string; name: string };
-  /** True for the single currently-active version. */
+  /** True for the single currently-active version. Alias: isPublished in external API docs. */
   published: boolean;
   /** The actual policy document — re-uses the existing OrgContext shape. */
   content: OrgContext;
