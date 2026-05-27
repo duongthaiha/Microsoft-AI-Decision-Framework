@@ -7,7 +7,10 @@
  * raw JWT again.
  *
  * Claim validations enforced:
- *   - `iss`  — must match `https://login.microsoftonline.com/{tenantId}/v2.0`
+ *   - `iss`  — must match v2 (`https://login.microsoftonline.com/{tenantId}/v2.0`)
+ *             OR v1 (`https://sts.windows.net/{tenantId}/`) — see ACCEPTED_ISSUERS.
+ *             Accepting both eliminates issuer-version breakage from app registration
+ *             misconfig; the audience claim is unique to this app so this is safe.
  *   - `aud`  — must match `api://{appId}` (v2 access token audience for custom scopes)
  *   - `exp`  — enforced automatically by jose
  *   - `scp`  — must contain `access_as_user`

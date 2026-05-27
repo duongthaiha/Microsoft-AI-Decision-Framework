@@ -34,7 +34,25 @@
 - **`listAllRequestsAdmin`**: The only cross-partition read in the codebase.  M1 must pass `enableCrossPartitionQuery: true` and gate it strictly behind role verification and audit logging (FR-030).
 - **Copilot SDK wiring**: `@github/copilot-sdk` is a peer dependency with a TODO comment.  M1 must confirm the SDK session API shape and wire it through `responses.ts` before any framework phase can run.
 
-## Team Update — 2026-05-26 M0 scaffold complete
+### 2026-05-27 — Dual-Issuer JWT Validation + Demo-Mode Web Build Fix (Dallas)
+
+**Root cause of `GET /sessions` 401 regression:**  
+`jwt-middleware.ts` strictly required the v2 issuer (`https://login.microsoftonline.com/{tenantId}/v2.0`). Microsoft Entra can issue access tokens with the v1 format (`https://sts.windows.net/{tenantId}/`) even after `requestedAccessTokenVersion: 2` is set, due to propagation delay or cached sessions. Any v1-format token produced a silent `issuer mismatch` 401.
+
+**Secondary issue — `azure.yaml` predeploy hook:**  
+The hook was building the web SPA with `VITE_ADVISOR_DEMO_MODE=true`. This bakes `isDemoMode = true` into the bundle, causing `getAccessToken()` to return `''` — no Bearer token is ever sent. The SPA looked functional (RequireAuth bypasses auth check in demo mode) but every API call returned 401. Fixed: web build now receives `VITE_ADVISOR_DEMO_MODE=false` plus the real Entra `VITE_` vars.
+
+**The invariant — dual-issuer acceptance:**  
+Always pass `issuer: [v2Issuer, v1Issuer]` (array) to `jose.jwtVerify` when the resource is an Entra-registered API. The `api://` audience is unique to your app, so accepting both issuer formats carries no security trade-off but eliminates the entire class of issuer-version breakage.
+
+**Diagnostic logging pattern:**  
+On `jwtVerify` failure, call `decodeJwt(token)` and `decodeProtectedHeader(token)` (no signature verification needed) and log `iss`, `aud`, `ver`, `scp`, `kid` to stderr. This makes future auth failures self-diagnosing in ACA/AppInsights logs.
+
+**Deployed:** revision `advisor-agent-app--0000005` (image `jwt-dual-issuer`)  
+**Skill:** `.squad/skills/dual-issuer-jwt-validation/SKILL.md`  
+**Decision:** `.squad/decisions/inbox/dallas-v2-token-fix.md`
+
+
 
 M0 delivered cohesively across 7 specialists: monorepo structure, backend TS scaffold, React web app, Bicep infra, tests with AC mapping, UX direction, and Constitution-voice documentation. All code installs, type-checks, and passes tests.
 
