@@ -141,3 +141,9 @@ requests | where url contains "/v1/responses" | project timestamp, duration, res
 - `.squad/decisions/inbox/parker-foundry-hosted-agent-blocker.md` — blocker decision record
 
 **Decisions files:** `parker-m2-observability-foundry.md`, `parker-foundry-hosted-agent-blocker.md` (inbox)
+
+---
+
+## 2026-05-27 — JWT Middleware Update (Cross-agent note)
+
+**From Dallas:** JWT middleware now accepts **both v1 and v2 Entra token issuers**. If your infrastructure work involves token validation, auth proxy configuration, or Entra integration testing, be aware that the backend middleware accepts either issuer format (`login.microsoftonline.com/{tenantId}/v2.0` and `sts.windows.net/{tenantId}/`). This is a defensive pattern that maintains the audience + issuer validation security model. Do not re-introduce strict v2-only validation in future work. See decision `dallas-v2-token-fix`.

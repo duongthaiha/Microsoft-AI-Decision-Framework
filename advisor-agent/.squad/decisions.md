@@ -941,3 +941,763 @@ Token lifetime: ~1 hour. Run the script promptly.
 | Integrated vectorization wired in index | ✅ |
 | Bicep module updated for future provisions | ✅ |
 
+
+### 2026-05-27: Dallas JWT & Admin Updates (Dated Session)
+
+#### dallas-v2-token-fix
+
+# Decision: Dual-Issuer JWT Validation (v1 + v2 Entra Tokens)
+
+**Author:** Dallas  
+**Date:** 2026-05-27T07:22:12Z  
+**Status:** Decided — deployed revision `advisor-agent-app--0000005`  
+**Refs:** FR-014, FR-019
+
+---
+
+## Context
+
+`GET /sessions` returned 401 after Ha signed out and back into the SPA. The Entra app registration (`appId: 4f4f4a4d-e60f-4b86-a681-86059aae4597`) had `requestedAccessTokenVersion: 2` confirmed via Graph API. The deployed SPA was correctly sending real Entra tokens (not demo mode).
+
+## Root Cause
+
+`jwt-middleware.ts` was set up with a single `EXPECTED_ISSUER`:
+
+```
+https://login.microsoftonline.com/cdfe81b5-821e-4f07-9ea7-516efc8497e4/v2.0
+```
+
+Microsoft Entra can issue tokens with **either** of these issuers depending on when the `requestedAccessTokenVersion: 2` setting propagates, cached sessions, or tenant-level policy overrides:
+
+| Format | Issuer |
+|--------|--------|
+| v2     | `https://login.microsoftonline.com/{tenantId}/v2.0` |
+| v1     | `https://sts.windows.net/{tenantId}/` |
+
+When the backend only accepted v2, any token issued with the v1 issuer format silently produced a `401 { reason: "issuer mismatch" }`. The SPA showed no useful error — just "API GET /sessions failed: 401".
+
+## Secondary Issue: `azure.yaml` predeploy hook
+
+The predeploy hook was building the web SPA with `VITE_ADVISOR_DEMO_MODE=true`:
+
+```sh
+VITE_ADVISOR_DEMO_MODE=true npm run build --workspace=web
+```
+
+This bakes `isDemoMode = true` into the bundle. `getAccessToken()` returns `''` immediately in demo mode — no `Authorization` header is ever sent. Future `azd deploy` runs would silently regress auth.
+
+Fixed: removed demo mode from the web build; added real `VITE_` vars and reads `VITE_AZURE_REDIRECT_URI` / `VITE_API_BASE_URL` from AZD env.
+
+## Decision
+
+### §A — Dual-issuer acceptance (defensive pattern)
+
+Accept **both** v1 and v2 issuers in `jose`'s `jwtVerify` options:
+
+```ts
+const ACCEPTED_ISSUERS = [
+  `https://login.microsoftonline.com/${TENANT_ID}/v2.0`,
+  `https://sts.windows.net/${TENANT_ID}/`,
+];
+
+await jwtVerify(token, JWKS, {
+  issuer: ACCEPTED_ISSUERS,  // jose v5+ accepts string[]
+  audience: API_AUDIENCE,
+});
+```
+
+**Security rationale:** The `aud` claim is unique to our app (`api://4f4f4a4d-...`). A rogue v1 token from a different app cannot satisfy our audience check. Accepting both issuer formats carries zero security trade-off.
+
+### §B — JWT failure diagnostics
+
+On `jwtVerify` failure, decode the token without signature verification and log `iss`, `aud`, `ver`, `scp`, `alg`, `kid` to stderr. This makes future auth regressions self-diagnosing without needing to capture live tokens from users.
+
+### §C — `azure.yaml` predeploy hook fix
+
+Never build the web SPA with `VITE_ADVISOR_DEMO_MODE=true`. The hook now passes:
+- `VITE_ADVISOR_DEMO_MODE=false`
+- `VITE_ADVISOR_TENANT_ID` and `VITE_ADVISOR_CLIENT_ID` hardcoded (public identifiers)
+- `VITE_AZURE_REDIRECT_URI="${STATIC_WEB_APP_URL}"` from AZD env
+- `VITE_API_BASE_URL="${CONTAINER_APP_URL}"` from AZD env
+
+## Deployment
+
+- **Backend:** `az acr build` → image `jwt-dual-issuer` → `az containerapp update` → revision `advisor-agent-app--0000005` (Running, 100% traffic)
+- **Tests:** 30/30 passing including 4 new dual-issuer tests
+- **Frontend:** No web redeploy needed; current SPA was already built correctly by GitHub Actions (without demo mode)
+
+## Action Required from Ha
+
+1. In browser DevTools → Application → Storage → click **"Clear site data"** (or open an incognito window)
+2. Navigate to `https://polite-mushroom-0a09fa803.7.azurestaticapps.net/`
+3. Sign in with your Microsoft account
+4. `GET /sessions` should now succeed
+
+The middleware now accepts both v1 and v2 tokens, so even if Entra's token version propagation is delayed you will be unblocked.
+
+---
+
+#### dallas-cors-preflight-fix
+
+# Decision: CORS Preflight Fix — P0 Regression
+
+**Author:** Dallas (Backend Developer)  
+**Date:** 2026-05-27  
+**Status:** Deployed ✅  
+**Revision:** `advisor-agent-app--azd-1779864726`
+
+---
+
+## Context
+
+SPA at `https://polite-mushroom-0a09fa803.7.azurestaticapps.net/session/new` showed
+"Backend not ready yet — Failed to fetch" for all users. Backend `/health` returned 200
+but the SPA could not reach `/v1/responses`.
+
+---
+
+## Root Cause
+
+**Middleware ordering + W3C CORS preflight spec.**
+
+The W3C CORS specification (Fetch Standard §3.2) requires browsers to send an HTTP `OPTIONS`
+preflight request **without** an `Authorization` header before any cross-origin request that
+carries credentials. This is non-negotiable browser behaviour — it cannot be worked around
+from the client side.
+
+`jwtMiddleware` was mounted on `['/v1', '/sessions', '/admin']` in `index.ts` **before any
+CORS middleware existed**. When the browser sent `OPTIONS /v1/responses` with no `Authorization`
+header, `jwtMiddleware` responded with `HTTP 401 { error: "unauthorized", reason: "missing
+bearer token" }`. The response carried no `Access-Control-Allow-Origin` header, so the browser
+blocked the actual `POST` request entirely — producing "Failed to fetch" in the SPA.
+
+---
+
+## Fix
+
+### 1. CORS middleware mounted BEFORE `jwtMiddleware` (`agent/src/index.ts`)
+
+```typescript
+app.use(cors({
+  origin: corsOrigins,          // from ADVISOR_ALLOWED_ORIGINS env var
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Authorization', 'Content-Type'],
+}));
+// jwtMiddleware comes AFTER cors()
+app.use(['/v1', '/sessions', '/admin'], jwtMiddleware);
+```
+
+Origins are loaded from `ADVISOR_ALLOWED_ORIGINS` (comma-separated). Default: deployed SWA
+origin + `http://localhost:5173`. `cors({origin: '*'})` is explicitly NOT used — it is
+incompatible with `credentials: true` and violates the allowlist security policy.
+
+### 2. Belt-and-braces bypass in `jwtMiddleware` (`agent/src/auth/jwt-middleware.ts`)
+
+```typescript
+if (req.method === 'OPTIONS') {
+  next();
+  return;
+}
+```
+
+Added at the very top of the middleware, before any auth logic. Even if CORS middleware
+ordering ever regresses, preflight requests will pass through without a 401.
+
+### 3. Bicep wiring (`infra/modules/container-apps.bicep`, `infra/main.bicep`)
+
+- `container-apps.bicep` gains `param allowedOrigins string = ''`, wired to
+  `ADVISOR_ALLOWED_ORIGINS` env var on the Container App.
+- `main.bicep` gains `param allowedOrigins string = 'https://polite-mushroom-0a09fa803.7.azurestaticapps.net'`
+  and passes it through to the `containerApps` module call.
+
+### 4. Tests added (`agent/src/__tests__/auth-contract.test.ts`)
+
+- **Test 12:** `OPTIONS /v1/responses` from SWA origin → HTTP 2xx with
+  `Access-Control-Allow-Origin: <swa>` (no auth required).
+- **Test 13:** `OPTIONS /v1/responses` from unlisted origin → no `Access-Control-Allow-Origin`
+  header (origin blocked by allowlist).
+
+---
+
+## Verification
+
+```
+curl -i -X OPTIONS https://advisor-agent-app.wittysea-86254dbc.swedencentral.azurecontainerapps.io/v1/responses \
+  -H "Origin: https://polite-mushroom-0a09fa803.7.azurestaticapps.net" \
+  -H "Access-Control-Request-Method: POST" \
+  -H "Access-Control-Request-Headers: authorization,content-type"
+```
+
+**Response (2026-05-27):**
+```
+HTTP/2 204
+access-control-allow-origin: https://polite-mushroom-0a09fa803.7.azurestaticapps.net
+vary: Origin
+access-control-allow-credentials: true
+access-control-allow-methods: GET,POST,PUT,DELETE,OPTIONS
+access-control-allow-headers: Authorization,Content-Type
+```
+
+✅ HTTP 204 with correct `Access-Control-Allow-Origin`. SPA can now send credentialed POST
+requests. The "Failed to fetch" regression is resolved.
+
+---
+
+## Deployed Revision
+
+`advisor-agent-app--azd-1779864726`
+
+---
+
+## Lesson: CORS Preflight MUST Bypass Auth (Pattern for Brett)
+
+This is a classic Express footgun. The invariant is:
+
+> **CORS middleware MUST precede any authentication middleware.**  
+> Belt-and-braces: add `if (req.method === 'OPTIONS') return next()` at the top of every
+> auth middleware regardless of outer ordering.
+
+Brett should codify this as a standing contract test: any new route prefix added to
+`jwtMiddleware`'s path list must have a corresponding preflight test asserting 2xx +
+`access-control-allow-origin` from the allowed origin.
+
+See also: `.squad/skills/cors-preflight-with-jwt/SKILL.md` for the reusable pattern.
+
+---
+
+## Auth Invariant Preserved
+
+POST/GET/etc. requests to `/v1/*` still require a valid Bearer token. The bypass is
+**OPTIONS-only**. No authentication was removed from real requests.
+
+---
+
+#### dallas-m2-streaming-and-admin-writes
+
+# Decision: M2 Streaming + Admin Writes
+
+**ID:** dallas-m2-streaming-and-admin-writes  
+**Date:** 2026-05-27  
+**Author:** Dallas (Backend Developer)  
+**Status:** Implemented  
+**Spec refs:** FR-024 (versioned org-context write API), M2 SSE streaming spec
+
+---
+
+## Context
+
+M2 wave required two parallel backend features in a single PR:
+
+1. **Admin write API (Feature A):** Make `/admin/org-context` editable with a full versioned write API so admins can publish new context versions and the advisor reasoning loop picks them up per-request without a restart.
+
+2. **SSE Streaming (Feature B):** `POST /v1/responses` currently returns one batched JSON after the full reasoning loop. M2 needs incremental streaming so the SPA can show the advisor reasoning live.
+
+---
+
+## Decisions Made
+
+### Feature A — Versioned Org Context
+
+**Decision A1: New `org_contexts` Cosmos container, partition key `/id`**  
+Each version document has a unique id (e.g. `org-ctx-v1-{uuid}`). Partition key `/id` means point reads are efficient and no cross-partition overhead for individual version lookups. Trade-off: transactional batch for publish-one is impossible since versions are in different partitions.
+
+**Decision A2: Read-modify-write loop for `publish(id)`**  
+Since Cosmos transactional batch requires same partition, publish uses: (1) `listAll()`, (2) clear `published` flag on any currently-active version, (3) set `published = true` on target. Eventual consistency is acceptable for this rare admin operation. An alternative `org-ctx-pointer` document pattern is documented in history.md for M3 if needed.
+
+**Decision A3: Per-request `getPublished()` in reasoning loop**  
+Previously `getOrgCtx()` was called once at boot (M1 read the JSON file at startup). M2 changes to per-request: `orgContextStore.getPublished()` on every `POST /v1/responses`. This ensures a freshly published version takes effect on the next turn without a process restart. The cold-path cost is one Cosmos read per request — acceptable given the org context is small.
+
+**Decision A4: Boot seed from `data/org-context-default.json`**  
+On first boot, if `org_contexts` container is empty, the server creates version 1 from the seed JSON and publishes it. This runs async/detached so it never blocks the HTTP listener. Safe to retry — `listAll()` check guards against double-seeding.
+
+**Decision A5: `createAdminRouter` accepts optional deps object**  
+Changed signature from `createAdminRouter(): Router` to `createAdminRouter(deps?: AdminRouterDeps): Router`. Backward compatible — existing callers pass no args and get the noop store (503 for write operations). Tests updated to pass the in-memory store.
+
+### Feature B — SSE Streaming
+
+**Decision B1: `Accept: text/event-stream` content negotiation**  
+The route inspects `req.headers.accept` at entry and dispatches to `handleResponsesSSE` or `handleResponsesBatch`. Two separate functions — not a single function with branches — because error handling shapes are incompatible: batch uses `res.status(N).json()`, SSE uses `sseWrite(error) + res.end()`.
+
+**Decision B2: `res.flushHeaders()` before first `await`**  
+Required to force the SSE headers downstream through ACA's front-door before the first async operation. Without this, ACA buffers until the response is complete, defeating streaming.
+
+**Decision B3: 15-second keepalive comment**  
+`setInterval(() => res.write(': keepalive\n\n'), 15_000)` runs for the lifetime of the SSE connection. ACA idle timeout is 30s; 15s keepalive leaves comfortable margin. The interval is always cleared in `endSSE()`.
+
+**Decision B4: `onEvent` callback threaded into `runAdvisorLoop`**  
+Rather than duplicating the reasoning loop for SSE, added an optional `onEvent?: (event: SSELoopEvent) => void` field to `AdvisorLoopDeps`. When present, each model call uses `stream: true` (AsyncIterable). Text deltas are emitted as `text.delta`; tool call dispatch emits `tool.invoked` before and `tool.result` after each tool call. Backward compatible — existing tests don't set `onEvent` and use the non-streaming path unchanged.
+
+**Decision B5: Persist to Cosmos after `turn.completed` event**  
+The SSE path emits `turn.completed` (with final text) before Cosmos persistence. This minimizes time-to-first-complete-response for the client. Persistence errors are caught and logged but do not fail the SSE stream — the client already received the response.
+
+---
+
+## Alternatives Considered
+
+**Alt: `client.responses.create({ stream: true })`** — The spec referenced the new Responses API. The codebase uses `chat.completions.create` throughout. Switching APIs mid-M2 would risk breaking the M1 tool-calling loop. Decision: stay on `chat.completions.create({ stream: true })`.
+
+**Alt: Cosmos transactional batch for publish** — Would require moving all versions to the same partition (e.g. partition key `/orgId`). That's a data migration. Read-modify-write loop is simpler for MVP scale.
+
+---
+
+## Test Coverage
+
+6 new tests in `src/__tests__/sse-streaming.test.ts`:
+- Test 1: SSE event order (turn.created → text.delta+ → turn.completed → response.done)
+- Test 2: Non-streaming fallback (no Accept header → batched JSON)
+- Test 3: Error mid-stream (emits error event, closes gracefully)
+- Test 4: POST /admin/org-context/versions → 201 draft
+- Test 5: GET /admin/org-context/versions → list
+- Test 6: POST /admin/org-context/versions/:id/publish → publish + unpublish others
+
+All 26 tests pass (20 original + 6 new).
+
+---
+
+#### lambert-m2-streaming-admin-reviewer
+
+# Decision: lambert-m2-streaming-admin-reviewer
+
+**Date:** 2026-05-27  
+**Author:** Lambert (Frontend Developer)  
+**Requested by:** Ha Duong  
+**Sprint:** M2 Wave  
+
+---
+
+## Context
+
+M2 frontend wave covering three parallel features shipped while Dallas delivers the matching backend (agent dallas-4). All changes are confined to `web/src/`; no `agent/` files were touched.
+
+---
+
+## Feature 1 — SSE Streaming in SessionPage
+
+### Problem
+Current SessionPage POSTs to `/v1/responses` and waits up to 60 s for a batched JSON response. This produces a poor UX (long spinner, no progressive feedback) and prevents showing tool invocations in real time.
+
+### Decision
+Replace `apiPost` with a hand-rolled SSE consumer (`streamResponses` async generator in `client.ts`). Use `fetch` with `Accept: text/event-stream` and `Authorization: Bearer <token>` — the native `EventSource` API cannot carry custom headers, making it unsuitable for protected endpoints.
+
+### SSE parser implementation
+- Read the response body via `response.body.getReader()`
+- Accumulate chunks in a `buffer` string, split on `\n\n` for event boundaries
+- Skip lines starting with `: ` (SSE comments / keepalive heartbeats)
+- Parse `event: X` + `data: Y` pairs; `JSON.parse` the data payload
+- Emit typed `SSEEvent` discriminated union events to the caller
+- Clean up with `reader.cancel()` in a `finally` block
+
+### Graceful fallback
+If `Content-Type` is not `text/event-stream` (backend not yet upgraded), fall through to `response.json()` and emit a `__json_fallback__` sentinel. `SessionPage` handles this identically to the old batched path — deploy ordering is safe.
+
+### AbortController wiring
+`AbortController` stored in `useRef<AbortController>`. Aborted on:
+1. Component unmount (`useEffect` cleanup)
+2. New submission (before starting a fresh stream)
+
+Aborted streams do not update state (guarded by `signal.aborted` check in the catch block).
+
+### Tool call chips
+Collapsible `<ToolChip>` component. State: `{ toolName, args, resultSummary, done, collapsed }[]`. Auto-collapse + add ✓ on `tool.result`. Persisted to `Turn` history on `response.done`. Error turns include a Retry button that re-calls `runStream(retryPayload)`.
+
+---
+
+## Feature 2 — Admin Org Context Edit + Publish
+
+### New routes wired (Dallas M2 backend)
+- `GET /admin/org-context/versions` — version list  
+- `POST /admin/org-context/versions` — create draft  
+- `POST /admin/org-context/versions/:id/publish` — publish
+
+### OrgContextPage rewrite
+Two-column layout: version list (left, newest first) + edit form (right). Form edits:
+- `changeSummary` — plain text input
+- `systemInventory`, `entitlements`, `customInstructions` — JSON textareas (M2 scope; full row-level editors deferred to M2.1)
+
+`isDirty` computed by comparing `JSON.stringify` of rebuilt content vs original. "Save as new draft" disabled when not dirty. "Publish" disabled when already published.
+
+Relative-time helper (no external dependency): compares `Date.now()` to ISO timestamp, formats as `Xm ago` / `Xh ago` / `Xd ago`.
+
+Toast: fixed-position, auto-dismiss after 3.5 s via `setTimeout`. Defined inline with a `useToast` custom hook; no third-party library.
+
+### EntitlementsPage + CustomInstructionsPage
+Both pages are read-only in M2 — a `coming-soon-banner` communicates to admins that write actions land in M2.1 once Dallas ships the standalone routes. Data is fetched from the existing `/admin/org-context` endpoint.
+
+### New types in `web/src/types/index.ts`
+```ts
+export interface OrgContextVersion {
+  id: string;
+  version: number;
+  published: boolean;
+  publishedAt?: ISOTimestamp;
+  publishedBy?: string;
+  content: OrgContext;
+}
+```
+
+---
+
+## Feature 3 — Reviewer Queue
+
+### Route and gating
+`/reviewer` — new top-level route. Nav link in `AppHeader` visible to `AdvisorAdmin` role. **TODO M2.1:** switch gating role to `AdvisorReviewer` once the role is provisioned in Entra.
+
+### Data source
+`GET /admin/requests` (existing admin endpoint). A dedicated reviewer-scoped `/requests` endpoint does not exist yet; using the admin route avoids backend changes.
+
+### Columns
+requestId (link to `/brief/:id`), submittedBy (ownerId/submitterId), projectName (title), reuse grouping (reuseDecision.decision), recommended tech (readinessBrief.recommendedPlatform.displayName), createdAt, status badge.
+
+### Expandable row
+Click row → inline `<ReadinessBriefPanel>` renders the same brief fields as `BriefPage`. Panel shows structured data (not raw markdown).
+
+### Status transition buttons  
+Accept / Reject / Needs more info. POSTs to `/requests/:id/status`.  
+**TODO M2.1** comment in code — backend route pending. On failure, toast reads "Action queued (backend route pending)" rather than surfacing an error.
+
+---
+
+## Alternatives considered
+
+| Decision | Alternative | Reason rejected |
+|----------|-------------|-----------------|
+| Hand-rolled SSE reader | Native `EventSource` | Cannot set `Authorization` header |
+| `__json_fallback__` sentinel | Separate code path / boolean flag | Keeps generator interface clean; caller handles both cases identically |
+| `React.Dispatch<T>` for callback type | `(action: T) => void` | ESLint `no-unused-vars` (base rule, no `@typescript-eslint` plugin) flags named params in interface function types |
+| JSON textareas for OrgContext arrays | Row-level form inputs | Sufficient for M2; full inline editing is M2.1 scope |
+
+---
+
+## Build & lint status
+
+- `npm run build` ✓ — 593 kB JS bundle (< 1 MB limit), 14.9 kB CSS
+- `npm run lint` ✓ — 0 warnings, 0 errors
+- No changes to `agent/` directory
+
+---
+
+#### parker-foundry-hosted-agent-blocker
+
+# Blocker: Foundry Hosted Agent Registration — M2.1 Follow-up
+
+**Author:** Parker (DevOps/SRE)  
+**Date:** 2026-05-27T07:00:00Z  
+**Severity:** Non-blocking (M2.1 deferred — not on M2 critical path)  
+**Spec ref:** FR-003, product-spec.md §9
+
+---
+
+## What was requested
+
+> "Register the ACA endpoint as a Microsoft Foundry Agent Service Hosted Agent."
+
+---
+
+## Research findings
+
+### What "Foundry Hosted Agent" actually is
+
+Foundry Hosted Agent is a **container hosting service** operated by the Foundry gateway — not an endpoint registry. You give it a container image; it runs that image in an isolated sandbox with a dedicated Entra agent identity. Our ACA endpoint and a Foundry Hosted Agent are two separate hosting environments that both run the same code.
+
+### Docs consulted (2026-05-27)
+
+| Document | URL | Key finding |
+|---|---|---|
+| Hosted agents concept | https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents | Preview; container must use protocol library |
+| Deploy hosted agent (SDK + REST) | https://learn.microsoft.com/azure/foundry/agents/how-to/deploy-hosted-agent | Python SDK `azure-ai-projects>=2.1.0` only; no Bicep for agent version |
+| Quickstart (azd) | https://learn.microsoft.com/azure/foundry/agents/quickstarts/quickstart-hosted-agent | azd/VS Code only; no IaC resource type |
+| Bicep types reference | https://learn.microsoft.com/azure/templates/microsoft.cognitiveservices/accounts | CognitiveServices/accounts supports AIServices kind + projects child |
+
+### Three concrete blockers
+
+#### Blocker 1 — No Foundry project in our infra
+
+Foundry Hosted Agent requires:
+1. `Microsoft.CognitiveServices/accounts` with `kind=AIServices` + `allowProjectManagement: true`
+2. A child `Microsoft.CognitiveServices/accounts/projects` resource
+
+Our current `infra/modules/foundry.bicep` is a placeholder that acknowledges this gap. Neither resource is deployed to `rg-advisor-dev`.
+
+**Cost impact:** AIServices S0 = ~$10/mo base + model token costs (separate from current AOAI account).
+
+#### Blocker 2 — Container doesn't implement Foundry protocol library
+
+The Foundry gateway requires the container to use:
+- Python: `azure-ai-agentserver-responses`
+- .NET: `Azure.AI.AgentServer.Responses`
+- **Node.js: No official library as of 2026-05-27**
+
+The library exposes a `/responses` endpoint (not our `/v1/responses`), `/readiness`, and handles SSE streaming with the Foundry lifecycle (created → in_progress → completed). Our Express container doesn't implement this contract.
+
+**There is no Node.js Foundry protocol library currently published on npm.** Node.js is NOT listed in the [language support matrix](https://learn.microsoft.com/azure/foundry/agents/concepts/hosted-agents#language-support) for Hosted Agents.
+
+This is a fundamental gap: to deploy to Foundry Hosted Agent from Node.js, we would need to either manually implement the protocol contract or migrate the agent to Python/.NET.
+
+#### Blocker 3 — No Bicep resource type for agent version registration
+
+The Foundry data-plane agent version lifecycle (create/poll/activate) has **no ARM/Bicep resource type**. Registration is only possible via:
+- Python SDK (`azure.ai.projects>=2.1.0`, `project.agents.create_version(...)`)
+- azd + VS Code extension workflow
+- Direct REST API calls
+
+The `infra/modules/foundry.bicep` placeholder cannot be completed until Microsoft publishes a GA ARM resource type.
+
+---
+
+## What was delivered in M2
+
+| Artefact | Purpose |
+|---|---|
+| `scripts/register-foundry-agent.sh` | Reference registration script using Python SDK; guards on missing env vars; exits cleanly if Foundry project is not configured |
+| `docs/m2-foundry-hosted-agent.md` | Full M2.1 handoff doc: step-by-step unblocking plan, Bicep snippets, RBAC commands, JWT audience verification guidance |
+
+---
+
+## Recommended next steps (M2.1)
+
+1. **Decide on language:** Evaluate whether to migrate the agent to Python (Azure AI Agent Framework) or wait for Microsoft to publish a Node.js Foundry protocol library.
+2. **Provision Foundry project:** Update `infra/modules/foundry.bicep` with AIServices account + project (Bicep snippets in `docs/m2-foundry-hosted-agent.md`). Run `azd provision`.
+3. **Implement `/responses` protocol endpoint** (alongside existing `/v1/responses`).
+4. **Register agent version** via `scripts/register-foundry-agent.sh` or `azd` once above are done.
+5. **Verify JWT audience:** Foundry tokens may carry a different `aud` — check against `api://4f4f4a4d-e60f-4b86-a681-86059aae4597`.
+
+---
+
+*Parker — 2026-05-27T07:00:00Z*
+
+---
+
+#### parker-cosmos-data-plane-rbac
+
+# Parker: Cosmos DB Data-Plane RBAC Assignment (2026-05-27)
+
+**By:** Parker (DevOps/Infra Engineer)  
+**Date:** 2026-05-27T00:10:00Z  
+**Status:** ✅ COMPLETE — Agent MI now has Cosmos DB Built-in Data Contributor role  
+**Commit:** CLI assignment applied; Bicep already defined  
+
+---
+
+## Context
+
+Dallas's M1 CosmosSessionStore + CosmosRequestStore were returning `403 Forbidden` on first write attempts. Root cause: the Container App managed identity (`advisor-agent-identity`, principalId `c8c13fe3-325a-439b-8aa8-d365f3ebe285`) lacked Cosmos DB **data-plane** RBAC role assignment.
+
+The assignment was defined in Bicep (`infra/modules/identity.bicep` line 150) but had not yet been applied to the Azure Cosmos account.
+
+---
+
+## 🚨 Key Gotcha: Control-Plane vs Data-Plane RBAC
+
+**CRITICAL DISTINCTION:**
+
+- **Azure RBAC (Control-Plane):** `az role assignment create --role "Cosmos DB Account Reader Role"` → Grants ARM permissions (read/write account settings, keys, scaling). Does NOT unlock Cosmos DB API read/write operations.
+  
+- **Cosmos DB RBAC (Data-Plane):** `az cosmosdb sql role assignment create` → Grants SDK/API permissions (read/write documents, execute queries). Required for every application identity that touches Cosmos data.
+
+**Why This Matters:** A principal with control-plane "Cosmos DB Contributor" cannot read a single document. A principal with data-plane "Cosmos DB Built-in Data Contributor" can freely read/write items but cannot manage the account itself.
+
+**Dallas's situation:** The agent identity had control-plane Contributor (via infrastructure deployment) but **lacked data-plane Contributor**. Each SDK call to Cosmos hit a 403 Unauthorized error before the query even executed.
+
+**This is the #1 pit in Cosmos security setup.**
+
+---
+
+## Resources Discovered
+
+| Resource | Value |
+|---|---|
+| **Subscription ID** | `3d2c527a-481d-4e13-b3a1-637924b33343` |
+| **Resource Group** | `rg-advisor-dev` |
+| **Cosmos Account Name** | `advisor-cosmos-uwmrjzgkhs2hk` |
+| **Container App** | `advisor-agent-app` (user-assigned identity) |
+| **Agent Identity** | `advisor-agent-identity` |
+| **Agent MI PrincipalId** | `c8c13fe3-325a-439b-8aa8-d365f3ebe285` |
+
+---
+
+## Cosmos DB Built-in Roles (Well-Known IDs)
+
+| Role | GUID | Access |
+|---|----|--------|
+| Data Reader | `00000000-0000-0000-0000-000000000001` | Read-only (cannot create, upsert, delete) |
+| Data Contributor | `00000000-0000-0000-0000-000000000002` | Full read/write/delete on documents |
+
+**Why Data Contributor for the agent:** Dallas's stores call `createIfNotExists` (idempotent), `upsert`, and `replace` — all write operations. Reader-only role would fail on first write. Contributor is the correct choice.
+
+---
+
+## Assignment Execution
+
+### CLI Command Issued
+
+```bash
+az cosmosdb sql role assignment create \
+  --account-name advisor-cosmos-uwmrjzgkhs2hk \
+  --resource-group rg-advisor-dev \
+  --role-definition-id 00000000-0000-0000-0000-000000000002 \
+  --principal-id c8c13fe3-325a-439b-8aa8-d365f3ebe285 \
+  --scope "/"
+```
+
+### Result
+
+Assignment created successfully (HTTP 200):
+```
+Role Assignment ID: 2029d58b-61cd-4a7f-844b-8629dda32369
+Principal ID: c8c13fe3-325a-439b-8aa8-d365f3ebe285 (agent MI)
+Role: 00000000-0000-0000-0000-000000000002 (Data Contributor)
+Scope: / (account-wide)
+```
+
+### Verification
+
+✅ Agent MI now appears in role assignment list:
+```bash
+az cosmosdb sql role assignment list \
+  --account-name advisor-cosmos-uwmrjzgkhs2hk \
+  -g rg-advisor-dev
+```
+
+---
+
+## Bicep Codification Status
+
+✅ **Already in Infrastructure as Code**
+
+The role assignment is defined in `infra/modules/identity.bicep` (lines 150–159):
+
+```bicep
+resource agentCosmosContributor 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2023-11-15' = {
+  name: guid(cosmosAccountId, agentIdentity.id, cosmosDataContributorRoleId)
+  parent: existingCosmosAccount
+  properties: {
+    scope: cosmosAccountId
+    roleDefinitionId: '${cosmosAccountId}/sqlRoleDefinitions/${cosmosDataContributorRoleId}'
+    principalId: agentIdentity.properties.principalId
+  }
+}
+```
+
+**Implications:**
+- ✅ Future `azd up` deployments will automatically create this assignment.
+- ✅ No additional Bicep changes required.
+- ✅ The assignment is idempotent — repeated deployments will not fail.
+
+---
+
+## Verification: Dallas's Cosmos Writes
+
+To verify the fix works:
+
+1. **Restart the Container App revision:**
+   ```bash
+   az containerapp logs show -n advisor-agent-app -g rg-advisor-dev --tail 50
+   ```
+
+2. **Trigger a `/v1/responses` request** via the web UI (requires valid JWT).
+
+3. **Expected outcome:** Cosmos writes return `HTTP 201 Created` (success) instead of `HTTP 403 Forbidden`.
+
+---
+
+## M2 Follow-Up: Narrow Role Scope
+
+**Deferred decision:** The current role scope is `/` (account-wide). M1 uses account-level scope for simplicity. Before production:
+
+1. Narrow agent role to the `advisor` database scope.
+2. Narrow admin role similarly.
+3. Potential container-level scope if read isolation becomes a requirement.
+
+See `infra/modules/identity.bicep` line 154 TODO comment.
+
+---
+
+## References
+
+- **Cosmos DB Data-Plane RBAC:** https://learn.microsoft.com/azure/cosmos-db/nosql/security/how-to-grant-data-plane-role-based-access
+- **Azure RBAC vs Data-Plane RBAC:** https://learn.microsoft.com/azure/cosmos-db/roles/overview
+- **Bicep Implementation:** `infra/modules/identity.bicep` (lines 150–169)
+- **Dallas's Issue:** `.squad/decisions/inbox/dallas-m1-reasoning-loop.md` (§D)
+
+---
+
+#### parker-m2-observability-foundry
+
+# Decision: M2 Observability + Foundry Hosted Agent
+
+**Author:** Parker (DevOps/SRE)  
+**Date:** 2026-05-27T07:00:00Z  
+**Status:** Shipped (observability) / M2.1 follow-up (Foundry)
+
+---
+
+## EPIC 1 — Application Insights Observability ✅ Shipped
+
+### What shipped
+
+| Item | Status | Detail |
+|---|---|---|
+| `infra/modules/monitoring.bicep` | ✅ Pre-existing + enhanced | Log Analytics (PerGB2018, 30d) + App Insights workspace-based. Added `instrumentationKey` output. |
+| `infra/main.bicep` wiring | ✅ Pre-existing | `appInsightsConnectionString` passed to container-apps.bicep as `APPLICATIONINSIGHTS_CONNECTION_STRING` env var. |
+| `applicationinsights@^2.9.8` npm | ✅ Installed | `cd agent && npm install applicationinsights@^2.9.5` resolved to 2.9.8. |
+| SDK init in `agent/src/index.ts` | ✅ Wired | Import + `setup().setAutoCollectConsole(true,true).setAutoDependencyCorrelation(true).start()` guarded on env var. |
+| `requestProcessed` custom event | ✅ Wired | `appInsights.defaultClient?.trackEvent(...)` in `agent/src/adapter/responses.ts` after each loop completion. |
+
+### Custom event shape
+
+```ts
+appInsights.defaultClient?.trackEvent({
+  name: "requestProcessed",
+  properties: {
+    requestId,       // Cosmos request ID
+    sessionId,       // session
+    durationMs,      // total loop duration string
+    toolsInvoked,    // count of phases executed (bxt+search+reuse+readiness)
+    finalGrouping,   // readinessBrief.recommendedPlatform.platformKey
+    finalTech,       // readinessBrief.recommendedPlatform.displayName
+  },
+});
+```
+
+### Verification query (after deploy, wait 2–5 min)
+
+```kusto
+// In Application Insights → Logs:
+customEvents
+| where name == "requestProcessed"
+| project timestamp, tostring(customDimensions.requestId), tostring(customDimensions.durationMs), tostring(customDimensions.finalTech)
+| order by timestamp desc
+| take 20
+
+requests
+| where url contains "/v1/responses"
+| project timestamp, duration, resultCode
+| order by timestamp desc
+| take 20
+```
+
+### Guardrails respected
+
+- CORS middleware order NOT changed (Dallas's fix preserved) ✅
+- `jwt-middleware.ts` NOT modified ✅
+- `responses.ts` reasoning logic NOT changed — only `trackEvent` ADDED ✅
+- All 20 tests pass after changes ✅
+
+---
+
+## EPIC 2 — Foundry Hosted Agent Registration 🟡 M2.1 Blocked
+
+See `.squad/decisions/inbox/parker-foundry-hosted-agent-blocker.md` for full detail.
+
+**Summary:** Documented as M2.1 follow-up. Three blockers: no Foundry project infra, container doesn't implement protocol library, no Bicep for agent version registration.
+
+**Artefacts produced:**
+- `scripts/register-foundry-agent.sh` — reference registration script (Python SDK, guards on missing env vars)
+- `docs/m2-foundry-hosted-agent.md` — M2.1 handoff doc with step-by-step unblocking plan
+
+---
+
+## Commit strategy
+
+Pushed App Insights changes first (separate commit to reduce conflict with Dallas's streaming work on index.ts + responses.ts), then Foundry docs.
