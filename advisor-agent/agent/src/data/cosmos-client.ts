@@ -30,8 +30,13 @@ function resolveCosmosCredential(
     // DefaultAzureCredential supports VS Code session, Azure CLI, env vars, etc.
     return new DefaultAzureCredential();
   }
-  // Production: hosted agent identity / managed identity only.
-  return new ManagedIdentityCredential();
+  // Production: user-assigned managed identity.
+  // AZURE_CLIENT_ID is the clientId of the user-assigned identity injected by Bicep.
+  // ManagedIdentityCredential without a clientId targets system-assigned identity only;
+  // passing clientId selects the correct user-assigned identity.
+  // https://learn.microsoft.com/azure/container-apps/managed-identity
+  const clientId = process.env.AZURE_CLIENT_ID;
+  return clientId ? new ManagedIdentityCredential(clientId) : new ManagedIdentityCredential();
 }
 
 /**

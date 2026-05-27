@@ -53,7 +53,12 @@ export function getModelCredential(): TokenCredential {
   if (process.env.ADVISOR_LOCAL_DEV === "true") {
     return new DefaultAzureCredential();
   }
-  return new ManagedIdentityCredential();
+  // Production: user-assigned managed identity.
+  // AZURE_CLIENT_ID is the clientId injected by Bicep; required when the Container App
+  // uses a user-assigned (not system-assigned) identity.
+  // https://learn.microsoft.com/azure/container-apps/managed-identity
+  const clientId = process.env.AZURE_CLIENT_ID;
+  return clientId ? new ManagedIdentityCredential(clientId) : new ManagedIdentityCredential();
 }
 
 /**

@@ -85,9 +85,26 @@ declare global {
 const TENANT_ID =
   process.env.ENTRA_TENANT_ID ?? "cdfe81b5-821e-4f07-9ea7-516efc8497e4";
 
-const API_AUDIENCE =
-  process.env.ENTRA_API_AUDIENCE ??
-  "api://4f4f4a4d-e60f-4b86-a681-86059aae4597";
+// The canonical app ID GUID — unique to this app registration.
+const APP_ID = "4f4f4a4d-e60f-4b86-a681-86059aae4597";
+
+// The configured audience URI — defaults to the api:// form.
+const API_AUDIENCE_URI =
+  process.env.ENTRA_API_AUDIENCE ?? `api://${APP_ID}`;
+
+// Accept both the api:// URI form and the bare GUID form.
+//
+// Microsoft Entra sets the `aud` claim to the Application ID URI of the target
+// resource.  When that URI has NOT been explicitly set to the api:// form in the
+// app registration manifest, Entra falls back to the bare GUID.  Both map to the
+// same app registration, so accepting both carries no security trade-off — the
+// GUID is unique to this app, just as the api:// URI is.
+//
+// Pattern mirrors the dual-issuer acceptance that eliminated v1/v2 issuer breakage
+// (see `.squad/skills/dual-issuer-jwt-validation/SKILL.md`).
+const ACCEPTED_AUDIENCES: string[] = [
+  ...new Set([API_AUDIENCE_URI, APP_ID]),
+];
 
 // Accept both v1 (https://sts.windows.net/{tenantId}/) and v2
 // (https://login.microsoftonline.com/{tenantId}/v2.0) issuers.
@@ -102,6 +119,9 @@ const ACCEPTED_ISSUERS: string[] = [
 ];
 
 const JWKS_URI = `https://login.microsoftonline.com/${TENANT_ID}/discovery/v2.0/keys`;
+
+// Expose accepted audiences for diagnostics / tests.
+export { ACCEPTED_AUDIENCES, API_AUDIENCE_URI as API_AUDIENCE };
 
 // ---------------------------------------------------------------------------
 // JWKS — created once; jose caches the key set with a 10-minute TTL.
@@ -155,7 +175,7 @@ export async function jwtMiddleware(
   try {
     const { payload } = await jwtVerify<EntraPayload>(token, JWKS, {
       issuer: ACCEPTED_ISSUERS,
-      audience: API_AUDIENCE,
+      audience: ACCEPTED_AUDIENCES,
       // `exp` is validated automatically by jose.
     });
 
@@ -206,6 +226,23 @@ export async function jwtMiddleware(
     }
 
     res.status(401).json({ error: "unauthorized", reason });
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic helper — decodes a token without signature verification.
+// Used by the /v1/whoami endpoint to echo claims back to the caller.
+// ---------------------------------------------------------------------------
+
+export function decodeTokenClaims(
+  token: string
+): { header: Record<string, unknown>; claims: Record<string, unknown> } | null {
+  try {
+    const header = decodeProtectedHeader(token) as Record<string, unknown>;
+    const claims = decodeJwt(token) as Record<string, unknown>;
+    return { header, claims };
+  } catch {
+    return null;
   }
 }
 

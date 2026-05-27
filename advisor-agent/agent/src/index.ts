@@ -50,7 +50,7 @@ import { createCosmosClient } from "./data/cosmos-client.js";
 import { AzureProjectSearch } from "./search/project-index.js";
 import { createAoaiClient } from "./framework/advisor-loop.js";
 import { getModelCredential } from "./auth/identity.js";
-import { jwtMiddleware } from "./auth/jwt-middleware.js";
+import { jwtMiddleware, decodeTokenClaims } from "./auth/jwt-middleware.js";
 import type { OrgContext, OrgContextVersion } from "./data/models.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -173,6 +173,26 @@ async function getOrgCtx(): Promise<OrgContext | null> {
 // Null-safe stores (in case Cosmos is not configured)
 const safeSessionStore = sessionStore ?? createNoopSessionStore();
 const safeRequestStore = requestStore ?? createNoopRequestStore();
+
+// ---------------------------------------------------------------------------
+// Diagnostic endpoint — public (no JWT guard), decodes token without verifying.
+// Registered BEFORE jwtMiddleware so it is reachable without a valid token.
+// Ha: hit GET /v1/whoami with Authorization: Bearer <your-token> from the browser
+// or DevTools to see exactly what iss/aud/scp/ver claims Entra put in your token.
+// ---------------------------------------------------------------------------
+app.get("/v1/whoami", (req, res) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith("Bearer ")) {
+    res.status(400).json({ error: "provide Authorization: Bearer <token>" });
+    return;
+  }
+  const decoded = decodeTokenClaims(authHeader.slice(7));
+  if (!decoded) {
+    res.status(400).json({ error: "token not parseable" });
+    return;
+  }
+  res.json(decoded);
+});
 
 // ---------------------------------------------------------------------------
 // JWT protection — applied before protected routers.
