@@ -196,3 +196,10 @@ See decision record: `dallas-401-deep-dive-audience-fix` in decisions.md
 
 **Previous open task — Entra Application ID URI (`api://4f4f4a4d-...`):** Still open. Not addressed this session. Tracked in history entry above and in `parker-private-networking.md` follow-ups table.
 
+
+
+---
+
+### 2026-05-27 — Private Networking & Wave-1 Infrastructure Fix (Archived to decisions.md)
+
+Permanent private networking solution (VNet 10.0.0.0/22, private endpoints, policy-aligned Cosmos config, new CAE) has been archived to `.squad/decisions.md::parker-private-networking` for future infrastructure decisions and M3 follow-ups (AOAI PE, ACR Premium). CAE migration broke FQDN — VITE_API_BASE_URL updated by Coordinator.

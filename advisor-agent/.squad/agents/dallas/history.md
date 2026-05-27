@@ -85,6 +85,12 @@ On `jwtVerify` failure, call `decodeJwt(token)` and `decodeProtectedHeader(token
 
 ---
 
+### 2026-05-27 — Wave-1 Production Outage Resolved (Archived to decisions.md)
+
+Wave-1 fixes (ManagedIdentityCredential clientId, error classification, Cosmos public-net access) have been archived to `.squad/decisions.md` for future onboarding and decision reference. See `dallas-sessions-500-diagnostics`, `dallas-sessions-502-diagnostics`.
+
+---
+
 ## Historical Learnings Archive
 
 See `.squad/agents/dallas/history-archive.md` for M0/M1 learnings and earlier context.

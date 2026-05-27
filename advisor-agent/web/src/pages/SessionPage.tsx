@@ -123,8 +123,11 @@ export function SessionPage() {
   const [streamingTools, setStreamingTools] = useState<ToolCallChip[]>([]);
   const [intakeCollapsed, setIntakeCollapsed] = useState(false);
 
+  const [chatInput, setChatInput] = useState('');
+
   const abortRef = useRef<AbortController | null>(null);
   const chatEndRef = useRef<HTMLDivElement>(null);
+  const chatInputRef = useRef<HTMLTextAreaElement>(null);
 
   // Auto-scroll to latest content
   useEffect(() => {
@@ -258,13 +261,44 @@ export function SessionPage() {
     }
   }, []);
 
+  // Freeform chat send — always available in the right panel
+  function handleChatSend(e: React.FormEvent) {
+    e.preventDefault();
+    const text = chatInput.trim();
+    if (!text || submitting) return;
+
+    setChatInput('');
+    setTurns((prev) => [...prev, { role: 'user', text, timestamp: new Date().toISOString() }]);
+
+    const payload: RequestPayload = {
+      sessionId: id && id !== 'new' ? id : undefined,
+      title: form.projectName || text.slice(0, 80),
+      businessOutcome: text,
+      targetUsers: form.affectedUsers,
+      desiredBehavior: form.desiredBehavior,
+      dataSources: splitList(form.dataSources),
+      actions: splitList(form.actions),
+      urgency: form.urgency || undefined,
+      constraints: splitList(form.constraints),
+    };
+
+    runStream(payload);
+  }
+
+  function handleChatKeyDown(e: React.KeyboardEvent<HTMLTextAreaElement>) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleChatSend(e as unknown as React.FormEvent);
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     const userText = buildUserSummary(form);
     setTurns((prev) => [...prev, { role: 'user', text: userText, timestamp: new Date().toISOString() }]);
 
     const payload: RequestPayload = {
-      sessionId: id,
+      sessionId: id && id !== 'new' ? id : undefined,
       title: form.projectName,
       businessOutcome: form.businessOutcome,
       targetUsers: form.affectedUsers,
@@ -418,13 +452,14 @@ export function SessionPage() {
         )}
       </aside>
 
-      <main className="session-chat" aria-label="Advisor conversation" aria-live="polite">
-        {!hasConversation && !submitting && (
-          <p className="placeholder-note">
-            Fill in the intake on the left and choose <strong>Start analysis</strong>.
-            The advisor&apos;s recommendation will appear here.
-          </p>
-        )}
+      <main className="session-chat" aria-label="Advisor conversation">
+        <div className="chat-messages-scroll" aria-live="polite">
+          {!hasConversation && !submitting && (
+            <p className="placeholder-note">
+              Fill in the intake on the left and choose <strong>Start analysis</strong>,
+              or type a message below to start chatting with the advisor.
+            </p>
+          )}
 
         {turns.map((turn, i) => (
           <div
@@ -534,6 +569,30 @@ export function SessionPage() {
         )}
 
         <div ref={chatEndRef} />
+        </div>{/* end .chat-messages-scroll */}
+
+        {/* Chat composer — always visible so the user can always send a message */}
+        <form className="chat-composer" onSubmit={handleChatSend} aria-label="Send a message">
+          <textarea
+            ref={chatInputRef}
+            className="chat-composer__input"
+            placeholder="Ask the advisor a question… (Enter to send, Shift+Enter for new line)"
+            value={chatInput}
+            onChange={(e) => setChatInput(e.target.value)}
+            onKeyDown={handleChatKeyDown}
+            disabled={submitting}
+            rows={2}
+            aria-label="Message input"
+          />
+          <button
+            type="submit"
+            className="chat-composer__send"
+            disabled={submitting || !chatInput.trim()}
+            aria-label="Send message"
+          >
+            {submitting ? '…' : 'Send'}
+          </button>
+        </form>
       </main>
     </div>
   );
