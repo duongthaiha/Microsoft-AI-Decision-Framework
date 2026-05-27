@@ -722,3 +722,222 @@ Container App MI needs `Cosmos DB Built-in Data Contributor` role on the `adviso
 - Skill: `.squad/skills/aoai-direct-client-with-managed-identity/SKILL.md`
 - Commits: `9d32784`, `28d85cb`, `3ad0244`
 - Tests: 18 passed (11 auth-contract + 7 reasoning-loop)
+
+---
+
+### 2026-05-27: M1 Completion Decisions (Continuation)
+
+#### lambert-m1-chat-render-and-session-list
+
+**By:** Lambert (Frontend Developer)  
+**Date:** 2026-05-26  
+**Status:** ✅ COMPLETE — built, zero TS errors, pushed to feat-ai-decision-agent
+
+**Summary**
+
+Replaced the raw-JSON dump in `SessionPage.tsx` with a proper `turns: Turn[]` state array. On submit, a user turn is pushed immediately (formatted as a concise markdown summary: `**New project: {name}**` + key fields). On API success, the assistant text is extracted defensively from `response.output[0].content[0].text` (falls back gracefully if the shape diverges). On API error, an italic error note is pushed as an assistant turn so the conversation history is preserved even when the backend is a 501.
+
+After the first turn, the intake panel auto-collapses and shows an "Edit intake" toggle, so users can iterate without losing the chat history. The chat panel has `aria-live="polite"` and auto-scrolls to the latest turn via `useRef` + `scrollIntoView({ behavior: 'smooth' })`.
+
+Thinking state is rendered as an animated three-dot bounce (CSS `@keyframes thinking-bounce`) while waiting for the response — no library needed.
+
+**Markdown library choice:** `react-markdown` 9.0.1 (ESM, remark-based). Chosen because zero runtime config needed for basic markdown, streaming-ready for M2, lightweight compared to alternatives, and well-maintained in React ecosystem. All assistant turns render through `<ReactMarkdown>`.
+
+**Session list wiring:** `HomePage.tsx` now calls `GET /sessions` on mount via `apiGet<Session[]>`. Renders loading / error / empty states. "Start a new session" button calls `POST /sessions` and navigates to `/session/:id`. Falls back to `/session/new` if the backend isn't deployed yet (graceful — the intake form still works).
+
+**Admin page status:** All three admin pages wired to real API calls (`GET /admin/org-context`, `GET /admin/requests`, `GET /admin/projects`). All return graceful error states. `RequireAdmin` verified: checks `roles.includes('AdvisorAdmin')` via `idTokenClaims.roles` from MSAL. Works correctly in demo mode.
+
+**Type cohesion fix:** `web/src/types/index.ts` fully reconciled with `agent/src/data/models.ts`. Added `sessionId` field to `Session`, `SessionTurn` added, `ReuseDecision` shape updated, `ReadinessBrief` reworked, `FrameworkAnswers` structure updated, and multiple entitlement/project type fixes applied.
+
+**E2E smoke result:** SPA builds and deploys successfully to SWA. Sign-in flow works (MSAL popup). Intake form renders and submits. API calls reach the Container App but `/v1/responses` and `/sessions` return 4xx/5xx (Dallas's routes not yet live).
+
+**Files changed:**
+- `web/package.json` — `react-markdown@9.0.1` added
+- `web/src/types/index.ts` — full reconcile with agent models
+- `web/src/pages/SessionPage.tsx` — chat turns, markdown render, collapse toggle, auto-scroll
+- `web/src/pages/HomePage.tsx` — real GET /sessions, POST /sessions + navigate
+- `web/src/pages/admin/OrgContextPage.tsx` — GET /admin/org-context wired
+- `web/src/pages/admin/RequestsPage.tsx` — GET /admin/requests wired
+- `web/src/pages/admin/ProjectsPage.tsx` — GET /admin/projects wired
+- `web/src/pages/BriefPage.tsx` — mock updated to new ReadinessBrief shape
+- `web/src/styles.css` — chat-turn, chat-bubble, thinking-dots, intake-toggle, sessions-list CSS
+
+---
+
+#### ripley-framework-anchors-and-default-org-context
+
+**By:** Ripley (Lead/Architect)  
+**Date:** 2026-05-26  
+**Status:** ✅ COMPLETE — files written, routing to Dallas (agent loading) and review
+
+**Deliverables**
+
+Two data files:
+
+1. **`advisor-agent/data/framework-anchors.json`** — the structured framework reference Dallas loads into the advisor's system prompt, superseding the M1 inline fallback stub Dallas had committed.
+
+2. **`advisor-agent/data/org-context-default.json`** — the minimal default org context for first-boot when no admin has published a version. Dallas's M1 version already existed and correctly matched the TypeScript `OrgContext` model. Preserved and not replaced.
+
+**Schema design rationale:**
+
+Why extract to JSON instead of hardcoding in the system prompt: (1) Single-point update. Framework evolves (product renames, new groupings, revised BXT scoring). A single JSON file edit updates the prompt across all deployments without touching agent code. (2) Structured injection. Dallas's system prompt builder can compose subsets per phase: intake filter for Phase 0, BXT dimensions for Phase 1, nineQuestions + capabilityGroupings for Phase 2, decisionAnchors for Phase 3. Token budget is controlled by loading only the relevant slice per step. (3) Testability. A structured JSON can be validated in unit tests against the schema shape. (4) Separation of concerns. Framework knowledge lives here, agent reasoning logic in `agent/src/framework/`, data store models in `agent/src/data/models.ts`.
+
+**Key schema decisions:**
+- **`groupingsAffected` on each Q.** Dallas needs to know which groupings each question narrows so the advisor can skip answered questions.
+- **`answers` arrays on each Q.** Structured answers enable programmatic filtering of org-context entitlements.
+- **`scoringGuide` as single string not object.** Fits prompt injection directly. No extra parsing step.
+- **`doYouNeedAnAgentCheckpoint` as a paragraph string.** This is a judgment call the advisor must surface verbatim — kept as prose, not structured fields.
+- **`decisionAnchors` as arrays of criteria strings.** Dallas can inject these as bullet lists per decision tree branch.
+
+**Source docs cited:**
+- `docs/decision-framework.md` — Intake Filter, UX Framing, BXT scorecard, 9 critical questions
+- `docs/capability-model.md` — Five capability groupings, mental models
+- `docs/evaluation-criteria.md` — Complexity tiers, skills matrix, trust boundary, action safety
+- `advisor-agent/product-spec.md` — 9-question label list
+- `.github/copilot-instructions.md` — Capability grouping anchor products canonical list
+
+**Routing:**
+- Dallas: Load `framework-anchors.json` into the system prompt builder; replace the inline BXT/9Q fallback object with a `require('../../../data/framework-anchors.json')` import (M1)
+- Dallas: Load `org-context-default.json` as first-boot seed when `GET /admin/org-context` returns 404 (M1)
+- Ripley: Update `framework-anchors.json` version when source docs are updated (Ongoing)
+
+---
+
+#### brett-m1-reasoning-loop-tests
+
+**By:** Brett (Tester)  
+**Date:** 2026-05-26  
+**Status:** ✅ WRITTEN — 17/18 tests passing (1 proactive contract gap)
+
+**Test Cases (Layer 1 — `agent/src/__tests__/reasoning-loop.test.ts`)**
+
+| Test | Status | Assertion |
+|------|--------|-----------|
+| 1. POST /sessions → 201 + ownerId binding | ✅ [VERIFIED] | 201, body.ownerId === jwt.oid, createSession called |
+| 2. GET /sessions returns only caller's sessions | ✅ [VERIFIED] | Two sessions seeded; response contains only caller's |
+| 3. GET /sessions/:id for other user → 404 | ✅ [VERIFIED] | 404 not 403 (no info disclosure) |
+| 4. POST /v1/responses happy path | ✅ [VERIFIED] | 200, Hosted Agent Responses shape, model called, createRequest called |
+| 5. POST /v1/responses cross-user session → 404 | ✅ [VERIFIED] | 404, model NOT called, createRequest NOT called |
+| 6. POST /v1/responses no sessionId → inline session | ✅ [VERIFIED] | 200, createSession called, res.body.sessionId populated |
+| 7. POST /v1/responses model throws → 502 | ❌ [PROACTIVE] | 502 `{ error: 'advisor_unavailable', reason }` |
+
+**Contract Notes (Deltas from Squad Brief Spec):**
+
+Three places where Dallas's implementation differs:
+1. **POST /sessions status code:** brief said 200; Dallas ships 201 (Created). Suite codifies **201** as canonical.
+2. **GET /sessions response envelope:** brief implied bare array; Dallas wraps in `{ sessions: [...] }`.
+3. **Session ID in POST /v1/responses response:** brief spec said `session?: { id, title }`; Dallas ships top-level `sessionId: string`.
+
+**Contract Gap — Test 7 (502 for Model Errors):**
+
+**Current state:** Dallas's `handleError` returns HTTP 500 for all non-404 errors, including AzureOpenAI call failures.
+
+**Contract:** Model/reasoning failures should return **502 Bad Gateway** with `{ error: 'advisor_unavailable', reason: <string> }`. 502 signals an upstream dependency failure vs. an internal bug (500).
+
+**Secondary issue:** Dallas's route creates a Request in Cosmos DB *before* calling the model (correct for draft persistence), but if the model throws, the Draft Request becomes orphaned. Test 7's `expect(requestStore.createRequest).not.toHaveBeenCalled()` asserts the transactional design. If Dallas accepts the orphan-and-TTL approach, remove that assertion and document the cleanup path.
+
+**Mock Strategy:**
+
+- **Cosmos DB:** Injected via `ResponsesAdapterDeps` DI pattern. `InMemorySessionStore` and `InMemoryRequestStore` are Map-backed with `vi.fn()` methods.
+- **Azure AI Search:** `MockProjectSearch` with `vi.fn()` `findSimilar` returning `PRESET_SIMILAR_PROJECTS`.
+- **AzureOpenAI model:** `mockAoaiClient` is a duck-typed object with `chat.completions.create` as a `vi.fn()`. Returning `finish_reason:'stop'` exits agentic loop after one turn.
+- **`jose` JWT verification:** `vi.mock('jose')` same pattern as `auth-contract.test.ts`.
+
+**Layer 2 — Smoke Script Changes (`scripts/smoke-prod.sh`):**
+
+Added Checks 4–5 (authenticated) gated on `SMOKE_TOKEN` env var.
+
+**Check 4:** `POST /sessions` with Bearer token → expect 201 (Dallas returns 201 in the real API).
+
+**Check 5:** `POST /v1/responses` with Bearer token + canned intake → expect 200, `status: completed`, non-empty `output[0].content[0].text`.
+
+How to obtain `SMOKE_TOKEN`:
+1. Sign in at the SWA URL in a browser (Lambert's MSAL UI).
+2. Open browser DevTools → Network tab.
+3. Find a request to the Container App.
+4. Copy the `Authorization: Bearer <token>` header value.
+5. `export SMOKE_TOKEN=<token>`
+6. `bash scripts/smoke-prod.sh`
+
+Token lifetime: ~1 hour. Run the script promptly.
+
+**M2 Backlog:** Once Parker provisions a CI service principal in the Entra tenant, automate via `az account get-access-token`.
+
+**M2 Playwright UI Test Backlog:** Sign-in flow, start new session, submit intake form, admin login, session resume — all deferred until Lambert's sign-in UI stabilises post-M1.
+
+**Multi-turn Tool-Calling Mock (M2 Enhancement):** Current mock uses `finish_reason:'stop'` on first turn, bypassing all tool calls. Implement as `advisor-loop-full.test.ts` in M2 to verify full tool sequence (scoreBXT → searchSimilarProjects → produceReadinessBrief → stop).
+
+**Files changed:**
+- `agent/src/__tests__/reasoning-loop.test.ts` — new, 7 integration tests
+- `scripts/smoke-prod.sh` — extended with Checks 4–5 (authenticated) + SMOKE_TOKEN docs
+
+---
+
+#### parker-m1-infra-roles-search-embedding
+
+**By:** Parker (Infrastructure Engineer)  
+**Date:** 2026-05-26  
+**Status:** ✅ ALL THREE TASKS COMPLETE
+
+**Task 1: AdvisorAdmin Entra App Role**
+
+- **App role added** to `advisor-agent-web` (appId `4f4f4a4d-e60f-4b86-a681-86059aae4597`) via `az ad app update --id 4f4f4a4d-e60f-4b86-a681-86059aae4597 --app-roles @infra/app-roles.json`. Role definition file committed at `infra/app-roles.json`.
+
+- **Service principal created** (object ID: `2f3a486a-03fe-4d0e-8d8e-17926105849f`).
+
+- **Role assigned to Ha Duong** via Microsoft Graph `appRoleAssignments`:
+  - principalId: `3cff1542-912f-4f64-b2f0-1c254dd4ad3c` (System Administrator)
+  - appRoleId: `d64375c5-5a38-41a3-9f36-f68f8a4c2674` (AdvisorAdmin)
+  - assignment ID: `QhX_PC-RZE-y8BwlTdStPADDO79R1sxHnYSExUnok1s`
+
+**Role manifest** (committed at `infra/app-roles.json`):
+```json
+[{"id":"d64375c5-5a38-41a3-9f36-f68f8a4c2674","value":"AdvisorAdmin","displayName":"Advisor Admin","description":"Can manage org context, projects, and inspect all advisor requests.","allowedMemberTypes":["User"],"isEnabled":true}]
+```
+
+**Verification note:** Ha Duong must **sign out and sign back in** to get a fresh token with the `roles` claim.
+
+**Task 2: AI Search `system-inventory-v1` Index**
+
+- **Index provisioned** via REST PUT against `advisor-search-uwmrjzgkhs2hk` (HTTP 201 Created).
+
+- **Index re-PUT with vectorizers** after AOAI embedding deployment landed (HTTP 204 No Content). The `vectorSearch.profiles[0].vectorizer` is now wired to `aoai-text-embedding-3-small`.
+
+- **`Search Index Data Contributor` granted** to agent MI `advisor-agent-identity` (role assignment ID: `da63719e-20a7-47e3-b476-b2ee23ca2917`).
+
+**Index state:**
+| Property | Value |
+|---------|-------|
+| Name | `system-inventory-v1` |
+| Fields | 13 (id, name, description, description_vector, capabilities, domain, owner_team, status, stack, data_sources, last_reviewed, confidence_score, org_id) |
+| Vector profile | `default-vector-profile` → `default-hnsw` (cosine, m=4, efC=400, efS=500) |
+| Vectorizer | `aoai-text-embedding-3-small` → integrated vectorization active |
+| Semantic config | `default-semantic-config` |
+| API version used | `2024-07-01` (stable) |
+
+**Task 3: AOAI text-embedding-3-small Deployment**
+
+- **Deployed** `text-embedding-3-small` version `1` to `advisor-aoai-uwmrjzgkhs2hk`:
+  - SKU: GlobalStandard (Standard SKU not available for this model in swedencentral)
+  - Capacity: 10K TPM
+  - provisioningState: Succeeded
+  - deploymentState: Running
+
+- **Bicep module updated** — `infra/modules/aoai.bicep` now contains the `embeddingDeployment` resource with `GlobalStandard` SKU and exports `embeddingDeploymentName` output.
+
+**Files changed:**
+- `infra/app-roles.json` — New — AdvisorAdmin app role manifest
+- `infra/modules/aoai.bicep` — Added `embeddingDeployment` resource + updated comment + output
+- `advisor-agent/data/system-inventory-v1-index.json` — Added `vectorizers` block + wired `vectorizer` in profile
+
+**M1 Status after this run:**
+| Item | Status |
+|------|--------|
+| AdvisorAdmin app role defined | ✅ |
+| AdvisorAdmin assigned to Ha Duong | ✅ |
+| system-inventory-v1 index provisioned | ✅ |
+| Search Index Data Contributor on agent MI | ✅ |
+| text-embedding-3-small AOAI deployment | ✅ |
+| Integrated vectorization wired in index | ✅ |
+| Bicep module updated for future provisions | ✅ |
+

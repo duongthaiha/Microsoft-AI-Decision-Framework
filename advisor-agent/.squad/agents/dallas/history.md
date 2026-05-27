@@ -143,3 +143,10 @@ Entra app registration now live (parker-4 phase 1 complete). Frontend will reque
 - Untracked test files (like Brett's `reasoning-loop.test.ts`) are NOT in git but ARE included in the Docker build context because `COPY agent/ ./agent/` in the Dockerfile copies all files. Always run `npm run build` locally before `azd deploy` to catch issues that will surface in the remote build.
 - The Docker remote build runs `npm install --workspace=agent` which installs only the workspace's `package.json` deps into a single node_modules at the repo root level. Any package referenced in agent code must be in `agent/package.json` (not just `package.json`).
 
+
+---
+
+## 2026-05-27 — M1 Reasoning Loop Shipped
+
+**Team update:** M1 reasoning loop deployed to revision `advisor-agent-app--azd-1779839176`. See decision #264 `dallas-m1-reasoning-loop` for full details. Key blockers for M2: Cosmos RBAC confirmation (Parker), and 502 error contract fix (proactive gap from Brett's Test 7).
+

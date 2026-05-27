@@ -163,3 +163,10 @@ Flip Test 7 from [PROACTIVE] → [VERIFIED] once Dallas adds 502 handling.
 3. **Smoke token automation**: service-principal client-credentials grant once Parker provisions CI SP.
 4. **Test 7 flip**: once Dallas adds 502 model-error handling, change `[PROACTIVE]` → `[VERIFIED]`.
 
+
+---
+
+## 2026-05-27 — M1 Test Suite Shipped
+
+**Team update:** 7 integration tests + smoke script extensions landed (17/18 passing, 1 proactive contract gap). See decision #267 `brett-m1-reasoning-loop-tests`. Proactive gap: Dallas should return 502 for model errors (not 500). Smoke script needs Check 4 update to accept 201.
+

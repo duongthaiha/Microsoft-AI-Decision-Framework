@@ -153,3 +153,10 @@ Always re-read `agent/src/data/models.ts` before finalising SPA types. Key diver
 - `SimilarProjectMatch.similarity` → `.score`; added `.technologies[]`
 
 The SPA type file mirrors the agent types 1:1 — no SPA-only abstractions. When agent types change, update SPA types in the same commit if possible, or flag the delta explicitly in the decision file.
+
+---
+
+## 2026-05-27 — M1 Chat Render Shipped
+
+**Team update:** Chat UI with markdown rendering and session list wiring landed. See decision #265 `lambert-m1-chat-render-and-session-list`. SPA builds successfully; API integration tests pending Dallas deployment. E2E Playwright tests deferred to M2.
+

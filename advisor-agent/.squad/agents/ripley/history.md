@@ -131,3 +131,10 @@ Agent identity has `Search Index Data Reader` (confirmed in `identity.bicep:95`)
 - `advisor-agent/data/org-context-default.json` (preserved from Dallas — correctly typed to TS model)
 - Decision file: `.squad/decisions/inbox/ripley-framework-anchors-and-default-org-context.md`
 - M1 routing: Dallas (D1: load framework-anchors.json into system prompt builder; D2: use org-context-default.json as first-boot seed)
+
+---
+
+## 2026-05-27 — Framework Anchors Shipped
+
+**Team update:** Framework anchors JSON and org context seed deployed. See decision #266 `ripley-framework-anchors-and-default-org-context`. Routing: Dallas loads both files in system prompt builder. Ripley monitors docs for framework changes.
+
