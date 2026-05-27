@@ -92,3 +92,52 @@ M0 delivered cohesively across 7 specialists: monorepo structure, backend TS sca
 - **Decision files written:** `parker-m1-infra-roles-search-embedding.md`, `parker-aoai-embedding-deploy.md` (inbox).
 - No permissions blockers encountered.
 
+**2026-05-27 Cosmos Data-Plane RBAC Fix (parker-cosmos-data-plane-rbac):**
+- **Issue:** Dallas's CosmosSessionStore + CosmosRequestStore hitting 403 on first write. Agent MI lacked Cosmos **data-plane** RBAC role (not control-plane).
+- **THE GOTCHA:** Azure RBAC (control-plane) ≠ Cosmos DB RBAC (data-plane). `az role assignment create --role "Cosmos DB Contributor"` grants account management but NOT SDK read/write. Must use `az cosmosdb sql role assignment create` (data-plane). This is the #1 pit in Cosmos security.
+- **Fix:** Assigned `Cosmos DB Built-in Data Contributor` (GUID `00000000-0000-0000-0000-000000000002`, scope `/`) to agent MI (`c8c13fe3-...`) via CLI. Role assignment created (ID: `2029d58b-...`).
+- **Codification:** Already in Bicep (`infra/modules/identity.bicep` line 150 `agentCosmosContributor`). Future `azd up` will auto-create it.
+- **Verification:** Run `az cosmosdb sql role assignment list --account-name advisor-cosmos-uwmrjzgkhs2hk -g rg-advisor-dev` — agent MI now appears.
+- **Next:** Dallas restarts Container App revision; tests `/v1/responses` write → should get 201 instead of 403.
+- **M2:** Narrow scope from account (`/`) to database or container level.
+- **Decision file:** `parker-cosmos-data-plane-rbac.md` (inbox).
+
+
+---
+
+## M2 Observability + Foundry Hosted Agent — 2026-05-27T07:00:00Z
+
+### EPIC 1 — Application Insights ✅ Shipped
+
+**Finding:** `infra/modules/monitoring.bicep` already had Log Analytics + App Insights workspace-based correctly wired. `main.bicep` already passed `appInsightsConnectionString` to container-apps.bicep as `APPLICATIONINSIGHTS_CONNECTION_STRING`. Only minor enhancements needed.
+
+**Changes delivered:**
+- `infra/modules/monitoring.bicep` — added `instrumentationKey` output (App Insights iKey, required by some SDK consumers)
+- `agent/` — installed `applicationinsights@^2.9.8` (resolved from `^2.9.5`)
+- `agent/src/index.ts` — App Insights import + `setup().setAutoCollectConsole(true,true).setAutoDependencyCorrelation(true).start()` at top, guarded on `APPLICATIONINSIGHTS_CONNECTION_STRING` env var
+- `agent/src/adapter/responses.ts` — `requestProcessed` custom event via `appInsights.defaultClient?.trackEvent(...)` after each reasoning loop completion. Properties: `{ requestId, sessionId, durationMs, toolsInvoked, finalGrouping, finalTech }`
+- All 20 tests pass. TypeScript build clean.
+
+**GUARDRAILS RESPECTED:** CORS middleware order untouched (Dallas's fix). `jwt-middleware.ts` untouched. Responses.ts reasoning logic untouched (only additive trackEvent).
+
+**Portal verification KQL:**
+```kusto
+customEvents | where name == "requestProcessed" | project timestamp, customDimensions | order by timestamp desc | take 20
+requests | where url contains "/v1/responses" | project timestamp, duration, resultCode | order by timestamp desc | take 20
+```
+
+### EPIC 2 — Foundry Hosted Agent Registration 🟡 M2.1 Blocked
+
+**Key Research Finding:** Foundry Hosted Agent is a container hosting service (not an endpoint registry). To register, you give Foundry a container image; it provisions a sandbox with a dedicated Entra agent identity. Our `/v1/responses` Express route does NOT satisfy the `azure-ai-agentserver-responses` protocol library contract that Foundry requires.
+
+**Three blockers:**
+1. No Foundry project provisioned (`Microsoft.CognitiveServices/accounts` kind=AIServices + project child resource)
+2. Container doesn't implement Foundry protocol library (no Node.js library published as of 2026-05-27)
+3. No Bicep resource type for agent version registration (Preview only, Python SDK / REST only)
+
+**Delivered:**
+- `scripts/register-foundry-agent.sh` — reference registration script (Python SDK, safe no-op if env vars missing)
+- `docs/m2-foundry-hosted-agent.md` — full M2.1 handoff document with Bicep snippets, RBAC commands, step-by-step unblocking plan
+- `.squad/decisions/inbox/parker-foundry-hosted-agent-blocker.md` — blocker decision record
+
+**Decisions files:** `parker-m2-observability-foundry.md`, `parker-foundry-hosted-agent-blocker.md` (inbox)
