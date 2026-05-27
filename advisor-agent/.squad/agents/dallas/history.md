@@ -7,6 +7,41 @@
 
 ## Active Learnings (M2+)
 
+### 2026-05-27 — Dual-Audience JWT Validation (bare GUID vs api:// URI)
+
+**Root cause of persistent `GET /sessions` 401 after dual-issuer fix:**
+Diagnostic logging from revision 0000005 showed clearly:
+```
+reason: 'unexpected "aud" claim value'
+aud: '4f4f4a4d-e60f-4b86-a681-86059aae4597'   ← bare GUID
+```
+The backend expected `api://4f4f4a4d-e60f-4b86-a681-86059aae4597` but Entra was issuing the bare GUID as `aud`. This happens when the Entra app registration's **Application ID URI** has NOT been set to the `api://` prefix form — Entra falls back to the raw GUID as the audience.
+
+**The invariant — dual-audience acceptance:**
+Always pass `audience: [...new Set([API_AUDIENCE_URI, APP_ID])]` (array with both forms) to `jose.jwtVerify` when the resource is an Entra-registered API. Both `api://4f4f4a4d-e60f-4b86-a681-86059aae4597` and `4f4f4a4d-e60f-4b86-a681-86059aae4597` are unique to this app registration, so accepting both carries no security trade-off but eliminates the entire class of Application ID URI misconfiguration breakage.
+
+**Root fix (longer-term):** Parker should set the Application ID URI to `api://4f4f4a4d-e60f-4b86-a681-86059aae4597` in the Entra portal manifest. After that, tokens will always carry the `api://` form and the bare GUID fallback becomes a silent safety net.
+
+**The `/v1/whoami` diagnostic endpoint:**
+Added `GET /v1/whoami` — public, no auth guard, requires an Authorization header, decodes the token WITHOUT signature verification and echoes back `{header, claims}`. Registered BEFORE the JWT middleware so it is reachable with any token (even an invalid one). Invaluable for diagnosing future auth breakage without needing browser DevTools network tab access.
+
+**Deployed:** revision `advisor-agent-app--azd-1779868342` (34/34 tests passing)
+**Decision:** `.squad/decisions/inbox/dallas-401-deep-dive.md`
+
+---
+
+### 2026-05-27 — /sessions 502: Cosmos DB publicNetworkAccess Disabled + handleError misclassification
+
+`publicNetworkAccess` on Cosmos DB was manually set to `Disabled` after last deploy, blocking ACA's outbound IP (`135.116.244.51`) at the network level (HTTP 403). Secondary bug: `handleError()` in `responses.ts` returned 502 for all errors whose message contained `"Azure"` — this matched the Cosmos SDK error string `Microsoft.Azure.Documents.Common/...`, causing Cosmos failures to surface as 502 instead of 500. Fix: re-enabled Cosmos public network access via CLI; removed `errMsg.includes("Azure")` from `isModelError` discriminator. 34/34 tests pass. Deployed as revision `advisor-agent-app--azd-1779874793`. Decision: `.squad/decisions/inbox/dallas-sessions-502-diagnostics.md`
+
+---
+
+### 2026-05-27 — /sessions 500: ManagedIdentityCredential Missing clientId
+
+`ManagedIdentityCredential()` without args targets system-assigned identity; Container App has only user-assigned identity (`AZURE_CLIENT_ID=141376cf…`). Fixed by passing `clientId` to `ManagedIdentityCredential` in both `cosmos-client.ts` and `identity.ts`. 34/34 tests pass. Deployed as revision `advisor-agent-app--azd-1779873274`. Decision: `.squad/decisions/inbox/dallas-sessions-500-diagnostics.md`
+
+---
+
 ### 2026-05-27 — Dual-Issuer JWT Validation + Demo-Mode Web Build Fix
 
 **Root cause of `GET /sessions` 401 regression:**  

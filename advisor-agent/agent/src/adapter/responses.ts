@@ -483,12 +483,13 @@ function handleError(err: unknown, res: Response) {
   if (code === 404) {
     return res.status(404).json({ error: "Not found" });
   }
-  // 502 Bad Gateway for upstream model/AOAI call failures
+  // 502 Bad Gateway for upstream AOAI/model call failures only.
+  // Do NOT include "Azure" here — Cosmos SDK errors also contain that string
+  // (e.g. "Microsoft.Azure.Documents.Common/...") and must not be misclassified.
   const errMsg = (err as Error).message ?? "";
   const isModelError =
     errMsg.includes("openai") ||
     errMsg.includes("AOAI") ||
-    errMsg.includes("Azure") ||
     errMsg.includes("cognitiveservices") ||
     errMsg.includes("Service unavailable") ||
     errMsg.includes("timeout") ||
