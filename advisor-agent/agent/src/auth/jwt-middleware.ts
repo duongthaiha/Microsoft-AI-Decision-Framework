@@ -26,7 +26,13 @@
  * FR-021 — AdvisorAdmin role gate (see requireRole below).
  */
 
-import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
+import {
+  createRemoteJWKSet,
+  decodeJwt,
+  decodeProtectedHeader,
+  jwtVerify,
+  type JWTPayload,
+} from "jose";
 import type { Request, Response, NextFunction } from "express";
 
 // ---------------------------------------------------------------------------
@@ -80,7 +86,17 @@ const API_AUDIENCE =
   process.env.ENTRA_API_AUDIENCE ??
   "api://4f4f4a4d-e60f-4b86-a681-86059aae4597";
 
-const EXPECTED_ISSUER = `https://login.microsoftonline.com/${TENANT_ID}/v2.0`;
+// Accept both v1 (https://sts.windows.net/{tenantId}/) and v2
+// (https://login.microsoftonline.com/{tenantId}/v2.0) issuers.
+//
+// Entra issues v1 tokens when requestedAccessTokenVersion is null/1 and v2 tokens
+// when it is set to 2.  Accepting both removes the entire class of issuer-mismatch
+// breakage from a misconfigured app registration — the audience claim is unique
+// to our app so there is no security trade-off in accepting both issuer formats.
+const ACCEPTED_ISSUERS: string[] = [
+  `https://login.microsoftonline.com/${TENANT_ID}/v2.0`,
+  `https://sts.windows.net/${TENANT_ID}/`,
+];
 
 const JWKS_URI = `https://login.microsoftonline.com/${TENANT_ID}/discovery/v2.0/keys`;
 
@@ -135,7 +151,7 @@ export async function jwtMiddleware(
 
   try {
     const { payload } = await jwtVerify<EntraPayload>(token, JWKS, {
-      issuer: EXPECTED_ISSUER,
+      issuer: ACCEPTED_ISSUERS,
       audience: API_AUDIENCE,
       // `exp` is validated automatically by jose.
     });
@@ -166,6 +182,26 @@ export async function jwtMiddleware(
   } catch (err) {
     const reason =
       err instanceof Error ? err.message : "token validation failed";
+
+    // Decode the token without signature verification so we can log the claims
+    // that caused the failure.  This makes future auth regressions self-diagnosing.
+    try {
+      const header = decodeProtectedHeader(token);
+      const claims = decodeJwt(token) as Record<string, unknown>;
+      console.error("[jwt] validation failed", {
+        reason,
+        alg: header.alg,
+        kid: header.kid,
+        iss: claims["iss"],
+        aud: claims["aud"],
+        ver: claims["ver"],
+        scp: claims["scp"],
+        exp: claims["exp"],
+      });
+    } catch {
+      console.error("[jwt] validation failed — token not parseable", { reason });
+    }
+
     res.status(401).json({ error: "unauthorized", reason });
   }
 }

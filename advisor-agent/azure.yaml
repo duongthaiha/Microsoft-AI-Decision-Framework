@@ -45,7 +45,12 @@ hooks:
     shell: sh
     run: |
       npm install
-      VITE_ADVISOR_DEMO_MODE=true npm run build --workspace=agent
-      VITE_ADVISOR_DEMO_MODE=true npm run build --workspace=web
+      npm run build --workspace=agent
+      VITE_ADVISOR_DEMO_MODE=false \
+        VITE_ADVISOR_TENANT_ID=cdfe81b5-821e-4f07-9ea7-516efc8497e4 \
+        VITE_ADVISOR_CLIENT_ID=4f4f4a4d-e60f-4b86-a681-86059aae4597 \
+        VITE_AZURE_REDIRECT_URI="${STATIC_WEB_APP_URL}" \
+        VITE_API_BASE_URL="${CONTAINER_APP_URL}" \
+        npm run build --workspace=web
     continueOnError: false
     interactive: false
