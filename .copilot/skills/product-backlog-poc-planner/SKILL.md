@@ -75,6 +75,7 @@ Structure the backlog as:
 6. Private networking and security.
 7. Observability and validation.
 8. POC demo and handoff.
+9. Documentation of architecture decisions, workflow diagrams, and operational runbooks.
 
 Use the [Backlog Output Template](references/BACKLOG_OUTPUT_TEMPLATE.md). Every story should have clear acceptance criteria and a visible owner type: Product, Engineering, Architecture, Security, Data, or DevOps.
 
