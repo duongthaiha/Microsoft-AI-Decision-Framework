@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "${AZURE_ENV_NAME}"
+    },
+    "location": {
+      "value": "${AZURE_LOCATION}"
+    },
+    "advisorAgentMode": {
+      "value": "${ADVISOR_AGENT_MODE=mock}"
+    },
+    "cosmosDatabaseName": {
+      "value": "${COSMOS_DATABASE_NAME=advisor}"
+    },
+    "searchIndexName": {
+      "value": "${SEARCH_INDEX_NAME=advisor-project-knowledge}"
+    },
+    "apiContainerImage": {
+      "value": "${API_CONTAINER_IMAGE=mcr.microsoft.com/azuredocs/containerapps-helloworld:latest}"
+    },
+    "containerAppMinReplicas": {
+      "value": "${CONTAINER_APP_MIN_REPLICAS=0}"
+    },
+    "containerAppMaxReplicas": {
+      "value": "${CONTAINER_APP_MAX_REPLICAS=3}"
+    }
+  }
+}

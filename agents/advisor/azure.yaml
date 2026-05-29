@@ -1,0 +1,37 @@
+# ============================================================
+# Azure Developer CLI (azd) project manifest
+# AI Framework Advisor Agent POC
+#
+# Commands:
+#   azd provision  — deploy infrastructure via Bicep
+#   azd deploy     — build image, push to ACR, update Container App
+#   azd up         — provision + deploy in one pass
+#   azd down       — tear down all resources
+#
+# Working directory: agents/advisor/  (this file's location)
+# ============================================================
+
+name: advisor
+
+metadata:
+  template: advisor@0.0.1
+
+# Infra configuration
+infra:
+  path: ./infra
+  provider: bicep
+  # main.bicep is at subscription scope; azd handles RG creation
+  module: main
+
+# Services
+services:
+  api:
+    # Source directory relative to this azure.yaml
+    project: ./api
+    language: ts
+    host: containerapp
+    docker:
+      # Dockerfile at workspace root (agents/advisor/Dockerfile)
+      # Context is agents/advisor/ so it can reach all npm workspaces
+      path: ./Dockerfile
+      context: .
