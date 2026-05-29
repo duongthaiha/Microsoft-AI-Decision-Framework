@@ -1,0 +1,537 @@
+{
+  "schemaVersion": "0.1.0",
+  "recordType": "advisorProjectCase",
+  "projectCaseId": "case-nfum-rural-claims-advisor-001",
+  "createdAt": "2026-05-29T12:19:21.901+01:00",
+  "sourceArtifacts": {
+    "intakeFormTemplate": "agents\\backlog\\sample-intake-form-nfum.json",
+    "decisionFrameworkSkill": ".agents\\skills\\microsoft-ai-decision-framework"
+  },
+  "persistenceTargets": {
+    "cosmosDb": [
+      "session",
+      "activeCustomInstructions",
+      "intakeSubmission",
+      "conversationCapture",
+      "decisionFrameworkEvidence",
+      "recommendationOutput",
+      "feedback"
+    ],
+    "azureAiSearch": [
+      "projectKnowledgeDocument",
+      "searchableText",
+      "frameworkTags",
+      "technologyTags",
+      "similarProjectSignals"
+    ]
+  },
+  "customerOrganization": {
+    "organizationId": "org-nfum",
+    "name": "NFU Mutual",
+    "country": "United Kingdom",
+    "industry": "Insurance",
+    "businessDomain": "Rural and agricultural claims"
+  },
+  "respondent": {
+    "name": "Sarah Williams",
+    "role": "Regional Claims Operations Manager",
+    "areaOfExpertise": "Rural insurance claims, especially farm property and weather-related damage"
+  },
+  "activeCustomInstructions": {
+    "instructionSetId": "instr-nfum-claims-001",
+    "version": 3,
+    "scope": "customerOrganization",
+    "activeFrom": "2026-05-20T09:00:00.000+01:00",
+    "organizationContext": {
+      "companySummary": "NFU Mutual is a UK insurance organization serving rural and agricultural customers where trust, consistency, and human accountability are critical.",
+      "businessPriorities": [
+        "Improve claim handler productivity",
+        "Preserve customer trust during weather-related claim spikes",
+        "Support newer handlers with consistent guidance"
+      ],
+      "preferredChannels": [
+        "Microsoft Teams",
+        "Claims system integration"
+      ],
+      "operatingConstraints": [
+        "Claim decisions and payments require human accountability",
+        "Coverage interpretation must remain grounded in approved policy and guidance sources",
+        "Recommendations should be explainable to team leaders and compliance reviewers"
+      ],
+      "technologyPreferences": [
+        "Prefer Microsoft 365 and Azure services already approved by the organization",
+        "Favor reusable agent patterns over one-off automation"
+      ]
+    },
+    "instructions": [
+      {
+        "id": "human-approval-required",
+        "text": "Recommendations must preserve human ownership of claim decisions, approvals, customer commitments, complaint handling, and payment decisions.",
+        "appliesToFrameworkQuestions": [
+          "phase2.action_safety",
+          "phase3.trade_offs_accepted"
+        ]
+      },
+      {
+        "id": "preferred-user-experience",
+        "text": "Prioritize solutions that can appear in Microsoft Teams and later integrate into the claims system.",
+        "appliesToFrameworkQuestions": [
+          "phase2.user_interaction_pattern",
+          "phase3.architecture_pattern"
+        ]
+      },
+      {
+        "id": "grounded-answers-only",
+        "text": "The agent must show source guidance, flag uncertainty, and avoid making coverage decisions.",
+        "appliesToFrameworkQuestions": [
+          "phase2.data_strategy",
+          "phase2.compliance_governance",
+          "phase3.recommendation_quality"
+        ]
+      }
+    ]
+  },
+  "intakeSubmission": {
+    "submittedAt": "2026-05-29T12:25:00.000+01:00",
+    "formTitle": "AI Advisor Intake Form",
+    "answers": {
+      "problem_plain_english": "Claims handlers spend too much time searching policy documents, internal guidance, previous claim notes, and repair guidance before deciding the next best action.",
+      "affected_people": "Claims handlers, team leaders, brokers, and customers waiting for claim decisions.",
+      "why_now": "Storm-related claims are increasing, and newer handlers need more support to make consistent decisions.",
+      "success_description": "Handlers can quickly understand what guidance applies to a claim, what information is missing, and what they should do next.",
+      "improvement_measures": [
+        "Faster claim triage",
+        "Fewer escalations for routine cases",
+        "More consistent decisions",
+        "Better customer updates",
+        "Less time searching documents"
+      ],
+      "must_not_happen": "The AI should not approve or reject claims by itself. It should support the handler, not replace their judgement.",
+      "main_users": "Claims handlers and claims team leaders.",
+      "user_experience_level": "Mixed experience. Some are senior specialists; others are newer handlers learning rural and agricultural claims.",
+      "current_work_locations": "They work across claims systems, email, Teams, policy documents, internal guidance, and case notes.",
+      "preferred_place_to_use_agent": [
+        "Inside the claims system",
+        "Microsoft Teams"
+      ],
+      "moment_of_need": "When a handler opens a new rural property claim, reviews incoming evidence, prepares a customer update, or decides whether to escalate the case.",
+      "agent_should_interrupt": "Both, depending on the situation",
+      "questions_to_answer": [
+        "What policy wording may apply to this claim?",
+        "What information is missing?",
+        "Has this type of claim been handled before?",
+        "What guidance should the handler consider?",
+        "When should the claim be escalated?"
+      ],
+      "tasks_to_help_complete": [
+        "Summarise claim details",
+        "Find relevant internal guidance",
+        "Draft customer update messages",
+        "Suggest next steps",
+        "Highlight risks or missing information"
+      ],
+      "human_owned_decisions": "Claim decisions, approvals, customer commitments, complaint handling, and any payment decision.",
+      "business_knowledge": [
+        "Policy documents",
+        "Claims handling guidance",
+        "Farm property claim procedures",
+        "Storm and flood claim guidance",
+        "Previous similar case examples",
+        "Escalation rules"
+      ],
+      "information_location": "SharePoint, internal claims systems, email templates, policy PDFs, team guidance notes, and experienced colleagues' knowledge.",
+      "information_freshness": "Not always. Some guidance is formal and current, while some local knowledge sits with senior handlers.",
+      "poor_advice_risk": "A handler could give the wrong customer message, miss an escalation point, or apply the wrong policy guidance.",
+      "sensitive_information": [
+        "Customer personal data",
+        "Claim details",
+        "Financial information",
+        "Medical information where relevant",
+        "Commercially sensitive farm or business data"
+      ],
+      "comfort_controls": [
+        "Show where answers came from",
+        "Make uncertainty clear",
+        "Require human approval",
+        "Keep an audit trail",
+        "Respect existing access permissions",
+        "Escalate complex or high-value claims"
+      ],
+      "tone": "Clear, practical, and careful. It should sound like a helpful senior claims colleague, not a chatbot making decisions.",
+      "trust_factors": "It explains its reasoning, links to source guidance, flags uncertainty, and does not pretend to know things it cannot verify.",
+      "rejection_factors": "Generic answers, overconfidence, wrong policy references, or anything that feels like it is replacing claims expertise.",
+      "real_world_situation": "A customer reports storm damage to several outbuildings on a farm. The handler needs to understand what cover may apply, what evidence is needed, whether any exclusions matter, and whether the case should be escalated.",
+      "ai_expected_response": "Summarise the claim, find the relevant policy wording and claims guidance, list missing information, suggest the next handler actions, and draft a careful customer update.",
+      "ai_boundaries": "It should not confirm cover, reject the claim, approve payment, or send the customer message without handler review.",
+      "first_use_case": "Helping claims handlers find the right guidance quickly and understand the next best action for routine rural property claims."
+    }
+  },
+  "conversationCapture": {
+    "sessionId": "session-nfum-claims-20260529-001",
+    "startedAt": "2026-05-29T12:26:00.000+01:00",
+    "turns": [
+      {
+        "turnId": "turn-001",
+        "role": "agent",
+        "messageType": "clarifyingQuestion",
+        "phase": "phase1.businessImpactAssessment",
+        "content": "To measure feasibility, do the policy documents and claims guidance already have access controls we can respect?",
+        "reasonAsked": "The intake identified sensitive claim and customer data, but did not confirm permission model availability."
+      },
+      {
+        "turnId": "turn-002",
+        "role": "user",
+        "messageType": "answer",
+        "phase": "phase1.businessImpactAssessment",
+        "content": "Yes. SharePoint permissions are already maintained by claims operations, and the claims system has role-based access."
+      },
+      {
+        "turnId": "turn-003",
+        "role": "agent",
+        "messageType": "clarifyingQuestion",
+        "phase": "phase2.technologyGroupings",
+        "content": "The custom instructions already say Teams should be prioritized and claim decisions must remain human-owned, so I will not ask those again. Do you need the assistant to take action in the claims system during the POC, or only draft and recommend actions for handler approval?",
+        "customInstructionAnswersUsed": [
+          "preferred-user-experience",
+          "human-approval-required"
+        ],
+        "reasonAsked": "The action boundary for system write-back was not answered by the intake form or custom instructions."
+      },
+      {
+        "turnId": "turn-004",
+        "role": "user",
+        "messageType": "answer",
+        "phase": "phase2.technologyGroupings",
+        "content": "For the POC it should only draft and recommend actions. No claims-system write-back."
+      },
+      {
+        "turnId": "turn-005",
+        "role": "agent",
+        "messageType": "summary",
+        "phase": "phase3.scenarioSpecificSelection",
+        "content": "I have enough evidence to recommend a Microsoft AI approach: Teams-first assistant experience, grounded retrieval over claims guidance, human approval for all decisions, and no write-back automation in the POC.",
+        "readinessState": "readyForRecommendation"
+      }
+    ],
+    "capturedFacts": [
+      {
+        "factId": "fact-permissions-exist",
+        "sourceTurnId": "turn-002",
+        "text": "SharePoint and claims-system permissions exist and should be respected by the assistant.",
+        "usedFor": [
+          "phase2.compliance_governance",
+          "phase2.data_strategy"
+        ]
+      },
+      {
+        "factId": "fact-no-writeback-poc",
+        "sourceTurnId": "turn-004",
+        "text": "The POC should draft and recommend actions only; it should not write back to the claims system.",
+        "usedFor": [
+          "phase2.action_safety",
+          "phase3.architecture_pattern"
+        ]
+      }
+    ]
+  },
+  "decisionFrameworkEvidence": {
+    "phase1BusinessImpactAssessment": {
+      "businessViability": {
+        "assessment": "Strong",
+        "evidence": [
+          "Clear operational pain around claims triage and guidance search.",
+          "Measurable outcomes include faster triage, fewer escalations, and more consistent decisions."
+        ]
+      },
+      "experienceDesirability": {
+        "assessment": "Strong",
+        "evidence": [
+          "Users already work in Teams, claims systems, email, and guidance repositories.",
+          "The desired tone is careful, practical, and senior-colleague-like."
+        ]
+      },
+      "technologyFeasibility": {
+        "assessment": "Medium",
+        "evidence": [
+          "Relevant knowledge sources exist, but freshness varies.",
+          "Permission-respecting retrieval and source citation are required."
+        ]
+      }
+    },
+    "phase2TechnologyGroupings": {
+      "preQuestionDoYouNeedAnAgent": {
+        "answer": "Yes, but keep it assistive rather than autonomous for the POC.",
+        "source": "intakeSubmission.must_not_happen, activeCustomInstructions.human-approval-required, conversationCapture.turn-004"
+      },
+      "criticalQuestionAnswers": [
+        {
+          "questionId": "user_interaction_pattern",
+          "answer": "Assistive conversational experience in Teams first, with later claims-system embedding.",
+          "source": "intakeSubmission.preferred_place_to_use_agent, activeCustomInstructions.preferred-user-experience",
+          "askedUser": false
+        },
+        {
+          "questionId": "build_style_control_level",
+          "answer": "Low-code/managed orchestration is acceptable for the POC, with pro-code APIs or connectors where claims-system integration becomes necessary.",
+          "source": "agentInference",
+          "askedUser": false
+        },
+        {
+          "questionId": "data_strategy",
+          "answer": "Ground answers in SharePoint guidance, policy PDFs, claim procedures, and selected case examples. Retrieval must respect permissions and cite sources.",
+          "source": "intakeSubmission.business_knowledge, conversationCapture.turn-002, activeCustomInstructions.grounded-answers-only",
+          "askedUser": true
+        },
+        {
+          "questionId": "orchestration_complexity",
+          "answer": "Moderate: summarize claim context, retrieve guidance, draft responses, and flag escalation or missing evidence. No autonomous write-back in the POC.",
+          "source": "intakeSubmission.tasks_to_help_complete, conversationCapture.turn-004",
+          "askedUser": true
+        },
+        {
+          "questionId": "compliance_governance",
+          "answer": "High: personal, financial, and potentially medical data require auditability, permission trimming, human review, and clear uncertainty handling.",
+          "source": "intakeSubmission.sensitive_information, intakeSubmission.comfort_controls",
+          "askedUser": false
+        },
+        {
+          "questionId": "scale_cost",
+          "answer": "Initial POC scale is claims handlers and team leaders; production scale and cost model remain an open follow-up.",
+          "source": "intakeSubmission.main_users",
+          "askedUser": false
+        },
+        {
+          "questionId": "action_safety",
+          "answer": "High safety boundary: no approvals, rejections, payments, or customer commitments without handler review.",
+          "source": "intakeSubmission.human_owned_decisions, activeCustomInstructions.human-approval-required",
+          "askedUser": false
+        },
+        {
+          "questionId": "team_skills",
+          "answer": "Unknown; should be confirmed before production architecture selection.",
+          "source": "missingEvidence",
+          "askedUser": false,
+          "followUpNeeded": true
+        },
+        {
+          "questionId": "proactive_vs_reactive",
+          "answer": "Both: reactive support on demand plus proactive alerts when evidence is missing or risk is high.",
+          "source": "intakeSubmission.agent_should_interrupt",
+          "askedUser": false
+        }
+      ],
+      "candidateTechnologyGroupings": [
+        "Grouping 2: Extensibility into existing copilots",
+        "Grouping 3: Build AI apps and agents",
+        "Grouping 4: AI services and building blocks"
+      ]
+    },
+    "phase3ScenarioSpecificSelection": {
+      "selectedScenarioPattern": "Human-in-the-loop claims guidance advisor",
+      "selectionInputsCoveredByCustomInstructions": [
+        "Teams-first experience",
+        "Human approval required",
+        "Grounded answers with uncertainty"
+      ],
+      "remainingOpenQuestions": [
+        "Production skill set and ownership model",
+        "Whether claims-system embedding or Teams remains primary after the POC",
+        "Approved source repositories and document lifecycle"
+      ]
+    }
+  },
+  "similarProjectSearch": {
+    "query": "claims guidance assistant for rural insurance handlers using policy documents, SharePoint guidance, case notes, Teams, human approval, and no autonomous claim decisions",
+    "indexName": "advisor-project-knowledge",
+    "topK": 3,
+    "matches": [
+      {
+        "projectId": "proj-insurance-guidance-assistant-014",
+        "title": "Policy Guidance Assistant for Commercial Insurance",
+        "score": 0.86,
+        "matchRationale": "Similar regulated insurance domain, grounded policy retrieval, source citation, and human approval boundary.",
+        "technologies": [
+          "Microsoft Copilot Studio",
+          "Azure AI Search",
+          "Azure OpenAI"
+        ]
+      },
+      {
+        "projectId": "proj-claims-triage-copilot-022",
+        "title": "Claims Triage Copilot for Weather Events",
+        "score": 0.79,
+        "matchRationale": "Similar storm-related claims triage and escalation workflow, but used a custom web UI rather than Teams.",
+        "technologies": [
+          "Microsoft Foundry",
+          "Azure AI Search",
+          "Azure App Service"
+        ]
+      }
+    ]
+  },
+  "recommendationOutput": {
+    "generatedAt": "2026-05-29T12:34:00.000+01:00",
+    "status": "recommendationReady",
+    "confidence": "Medium-High",
+    "recommendedApproach": {
+      "summary": "Start with a Teams-first human-in-the-loop claims guidance assistant using Copilot Studio for the conversational experience and orchestration, Azure AI Search for grounded retrieval over policy and guidance content, and Azure OpenAI or Microsoft Foundry model endpoints for summarization and drafting where needed.",
+      "primaryTechnologies": [
+        {
+          "name": "Microsoft Copilot Studio",
+          "role": "Conversational agent experience and low-code orchestration for a Teams-first POC."
+        },
+        {
+          "name": "Azure AI Search",
+          "role": "Grounded retrieval over policy documents, claims guidance, procedures, and approved case examples."
+        },
+        {
+          "name": "Azure OpenAI or Microsoft Foundry",
+          "role": "Language model capability for summarization, drafting, reasoning over retrieved guidance, and uncertainty-aware explanations."
+        }
+      ],
+      "supportingTechnologies": [
+        {
+          "name": "Microsoft Graph connectors or Graph-grounded content access",
+          "role": "Potential path for permission-aware access to Microsoft 365 content if source repositories are in SharePoint or Microsoft 365."
+        },
+        {
+          "name": "Application Insights",
+          "role": "Operational telemetry, recommendation traceability, and error visibility."
+        }
+      ]
+    },
+    "rationale": [
+      {
+        "reason": "The business problem is not generic chat; it is guidance retrieval, summarization, and next-best-action support inside a claims workflow.",
+        "evidence": [
+          "Handlers need to find relevant policy wording and missing information.",
+          "The AI must not approve, reject, or pay claims."
+        ]
+      },
+      {
+        "reason": "A Teams-first assistant matches the user's preferred place to work while leaving room for later claims-system embedding.",
+        "evidence": [
+          "The intake selected Teams and claims-system usage.",
+          "The active custom instructions prioritize Teams and later claims-system integration."
+        ]
+      },
+      {
+        "reason": "Azure AI Search is needed because the critical knowledge lives across documents, guidance notes, procedures, and prior cases.",
+        "evidence": [
+          "The intake identifies SharePoint, policy PDFs, claims guidance, previous examples, and escalation rules as key knowledge sources."
+        ]
+      },
+      {
+        "reason": "Human-in-the-loop controls are mandatory because poor advice could create customer, regulatory, and financial risk.",
+        "evidence": [
+          "Sensitive information includes customer personal data, claim details, financial information, and potentially medical data.",
+          "The comfort controls require source visibility, uncertainty, human approval, audit trail, and permission respect."
+        ]
+      }
+    ],
+    "customInstructionInfluence": [
+      {
+        "instructionId": "human-approval-required",
+        "effect": "Ruled out autonomous claim approval, payment, or claims-system write-back for the POC."
+      },
+      {
+        "instructionId": "preferred-user-experience",
+        "effect": "Prioritized Teams-first delivery and kept claims-system integration as a later extension."
+      },
+      {
+        "instructionId": "grounded-answers-only",
+        "effect": "Required source citations, uncertainty flags, and a grounded retrieval architecture."
+      }
+    ],
+    "tradeOffs": [
+      {
+        "tradeOff": "Copilot Studio accelerates the Teams-first POC but may need pro-code extension for deeper claims-system integration.",
+        "acceptedForPoc": true
+      },
+      {
+        "tradeOff": "Grounding through Azure AI Search improves answer quality, but document quality, freshness, permissions, and ingestion governance become critical dependencies.",
+        "acceptedForPoc": true
+      },
+      {
+        "tradeOff": "No autonomous write-back reduces risk, but limits measurable automation benefits in the first POC.",
+        "acceptedForPoc": true
+      }
+    ],
+    "assumptions": [
+      "Claims guidance and policy documents can be indexed or retrieved with appropriate permissions.",
+      "Teams is an acceptable first-channel experience for claims handlers.",
+      "The POC does not need to commit updates into the claims system."
+    ],
+    "followUpQuestions": [
+      "Who owns production maintenance of prompts, source content, and escalation rules?",
+      "What is the approved source-of-truth repository for policy wording and claims guidance?",
+      "What volume of handlers and claims should the production design support?"
+    ],
+    "similarProjectHighlights": [
+      {
+        "projectId": "proj-insurance-guidance-assistant-014",
+        "title": "Policy Guidance Assistant for Commercial Insurance",
+        "whyItMatters": "Shows a similar pattern for source-grounded guidance in a regulated insurance workflow."
+      },
+      {
+        "projectId": "proj-claims-triage-copilot-022",
+        "title": "Claims Triage Copilot for Weather Events",
+        "whyItMatters": "Shows a similar storm-claims triage workflow and escalation model."
+      }
+    ]
+  },
+  "projectKnowledgeDocument": {
+    "targetStore": "azureAiSearch",
+    "projectId": "case-nfum-rural-claims-advisor-001",
+    "customerOrganizationId": "org-nfum",
+    "title": "Rural Claims Guidance Advisor",
+    "summary": "Teams-first human-in-the-loop assistant for rural property claims handlers that retrieves policy and claims guidance, summarizes claim context, identifies missing evidence, drafts customer updates, and flags escalation points without making claim decisions.",
+    "businessOutcome": "Reduce time spent searching guidance and improve consistency of rural claims handling.",
+    "industry": "Insurance",
+    "businessDomain": "Rural and agricultural claims",
+    "useCaseTags": [
+      "claims triage",
+      "policy guidance",
+      "human in the loop",
+      "knowledge retrieval",
+      "customer communication drafting"
+    ],
+    "frameworkTags": [
+      "phase1.businessImpactAssessment",
+      "phase2.technologyGroupings",
+      "phase3.scenarioSpecificSelection",
+      "grouping2.extensibilityIntoExistingCopilots",
+      "grouping3.buildAiAppsAndAgents",
+      "grouping4.aiServicesAndBuildingBlocks"
+    ],
+    "technologyTags": [
+      "Microsoft Copilot Studio",
+      "Azure AI Search",
+      "Azure OpenAI",
+      "Microsoft Foundry",
+      "Microsoft Teams"
+    ],
+    "dataSourceTags": [
+      "SharePoint",
+      "policy PDFs",
+      "claims guidance",
+      "case notes",
+      "email templates"
+    ],
+    "sensitivityLevel": "High",
+    "status": "recommended",
+    "searchableText": "Rural claims guidance advisor for insurance handlers. Teams-first assistant using Copilot Studio, Azure AI Search, Azure OpenAI or Microsoft Foundry. Supports policy guidance retrieval, claim summarization, missing evidence checks, escalation guidance, and customer update drafting. Human approval required. No claim approvals, rejections, payments, or claims-system write-back in POC.",
+    "similarProjectSignals": {
+      "interactionPattern": "assistive conversational agent",
+      "proactivity": "reactive plus risk-based proactive alerts",
+      "dataPattern": "grounded retrieval over business documents and case examples",
+      "actionSafety": "draft and recommend only",
+      "governancePattern": "human approval, citations, audit trail, permission respect"
+    }
+  },
+  "feedback": {
+    "userRating": null,
+    "userComment": null,
+    "reviewStatus": "pendingStakeholderReview"
+  }
+}
