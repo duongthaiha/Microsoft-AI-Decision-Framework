@@ -80,3 +80,46 @@ Fixed at authoring time. Single `capabilities: [{ name: 'EnableServerless' }]` b
 3. Entra External ID auth not wired (AD-06 deferred)
 4. APIM tier not included (AD-07 open question)
 
+### Wave 2: Pre-Deployment Preflight Script (2026-05-29)
+
+**What was built:**
+```
+agents/advisor/infra/scripts/
+└── preflight-availability.ps1   ← READ-ONLY preflight check (new)
+```
+
+**Script purpose:** Service availability + quota check before `azd up`. Covers all 9
+required resource providers, per-region availability for every Bicep resource type,
+AI Search Basic quota via the Search usages REST API, and Azure Policy scan.
+Always exits 0. Never creates or modifies anything.
+
+**Live preflight results (run 2026-05-29T17:06:14+01:00 against sub 3d2c527a):**
+
+| Check | Result |
+|---|---|
+| Subscription | ME-MngEnvMCAP734518-haduong-1 — matches expected |
+| Resource Providers | All 9 Registered (Microsoft.App, .DocumentDB, .Search, .KeyVault, .ContainerRegistry, .Network, .ManagedIdentity, .OperationalInsights, .Insights) |
+| eastus2 | **GO** — all services available; AI Search Basic quota 0/12 |
+| swedencentral | **GO** — all services available; AI Search Basic quota 0/12 |
+| westeurope | **GO** — all services available; AI Search Basic quota 0/12 |
+| uksouth | **GO** — all services available; AI Search Basic quota 1/12 |
+| Policy 797b37f7 | NOT found at subscription scope (may be at MG level) |
+| Policy state | 5 Cosmos DB state records exist (prior resources) — non-blocking |
+| Blockers | NONE |
+
+**Recommended region: `eastus2`** (first GO, zero Search quota used, no prior resources).
+
+**Key observations:**
+- `swedencentral` is a strong alternative (EU data residency, 0/12 quota).
+- `uksouth` already has 1 Basic Search service deployed in this sub.
+- Policy 797b37f7 was not at subscription scope; likely applied at Management Group.
+  Our Bicep uses `publicNetworkAccess='Disabled'` + private endpoint — aligned regardless.
+- AI Search usages API (`/providers/Microsoft.Search/locations/{region}/usages`) is
+  accessible and returned live quota data. Caching per RP significantly speeds the check.
+
+**To proceed:**
+```bash
+azd env set AZURE_LOCATION eastus2
+azd up
+```
+

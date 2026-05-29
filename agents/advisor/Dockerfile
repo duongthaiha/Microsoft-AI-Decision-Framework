@@ -19,6 +19,7 @@ WORKDIR /app
 # Copy workspace manifests first to exploit Docker layer cache
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY shared/package.json ./shared/
+COPY data/package.json ./data/
 COPY api/package.json ./api/
 
 # Install all workspace deps (includes devDependencies for TypeScript)
@@ -26,10 +27,12 @@ RUN npm ci
 
 # Copy source for all workspaces the api depends on
 COPY shared/ ./shared/
+COPY data/ ./data/
 COPY api/ ./api/
 
-# Build shared types first, then api
+# Build shared → data → api (data has Azure SDK adapters needed at runtime)
 RUN npm run build --workspace=@advisor/shared
+RUN npm run build --workspace=@advisor/data
 RUN npm run build --workspace=@advisor/api
 
 # ============================================================
@@ -43,13 +46,16 @@ ENV NODE_ENV=production
 # Copy workspace manifests
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY shared/package.json ./shared/
+COPY data/package.json ./data/
 COPY api/package.json ./api/
 
 # Install production dependencies only
+# npm ci with workspace manifests present hoists @azure/* deps from @advisor/data
 RUN npm ci --omit=dev
 
 # Copy compiled output from builder
 COPY --from=builder /app/shared/dist ./shared/dist
+COPY --from=builder /app/data/dist ./data/dist
 COPY --from=builder /app/api/dist ./api/dist
 
 EXPOSE 3000

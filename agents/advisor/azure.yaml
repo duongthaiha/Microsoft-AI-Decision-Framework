@@ -35,3 +35,5 @@ services:
       # Context is agents/advisor/ so it can reach all npm workspaces
       path: ./Dockerfile
       context: .
+      # Docker daemon not available in this environment — use ACR Tasks for remote build
+      remoteBuild: true
