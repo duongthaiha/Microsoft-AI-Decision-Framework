@@ -83,6 +83,29 @@ export class CosmosGuidanceStore implements IGuidanceStore {
     return doc !== undefined ? this.fromDocument(doc) : null;
   }
 
+
+  async loadAllGuidance(
+    customerOrganizationId: string
+  ): Promise<CustomerGuidanceDocument[]> {
+    const { resources } = await this.requireContainer()
+      .items.query<GuidanceDocument>(
+        {
+          query:
+            'SELECT * FROM c WHERE c.customerOrganizationId = @orgId ORDER BY c.version DESC',
+          parameters: [{ name: '@orgId', value: customerOrganizationId }],
+        },
+        { partitionKey: customerOrganizationId }
+      )
+      .fetchAll();
+
+    return resources.map((doc) => this.fromDocument(doc));
+  }
+
+  async saveGuidance(doc: CustomerGuidanceDocument): Promise<void> {
+    const document: GuidanceDocument = { ...doc, id: doc.instructionSetId };
+    await this.requireContainer().items.upsert<GuidanceDocument>(document);
+  }
+
   // ---------------------------------------------------------------------------
   // Admin methods (not part of IGuidanceStore)
   // ---------------------------------------------------------------------------
@@ -113,9 +136,9 @@ export class CosmosGuidanceStore implements IGuidanceStore {
    * of versions per org — typically 1–5 for the POC).
    */
   async activateGuidance(
-    instructionSetId: string,
     customerOrganizationId: string,
-    activatedBy: string
+    instructionSetId: string,
+    activatedBy = 'system'
   ): Promise<void> {
     const { resources } = await this.requireContainer()
       .items.query<GuidanceDocument>(

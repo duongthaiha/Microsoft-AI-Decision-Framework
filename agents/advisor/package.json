@@ -12,7 +12,7 @@
     "eval"
   ],
   "scripts": {
-    "build": "npm run build --workspace=shared && npm run build --workspace=data && npm run build --workspace=api && npm run build --workspace=cli",
+    "build": "npm run build --workspace=shared && npm run build --workspace=data && npm run build --workspace=api && npm run build --workspace=cli && npm run build --workspace=web",
     "build:shared": "npm run build --workspace=shared",
     "build:data": "npm run build --workspace=data",
     "typecheck": "npm run typecheck --workspace=shared && npm run typecheck --workspace=data && npm run typecheck --workspace=api && npm run typecheck --workspace=cli",

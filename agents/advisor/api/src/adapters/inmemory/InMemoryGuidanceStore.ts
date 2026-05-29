@@ -55,11 +55,37 @@ const NFU_GUIDANCE: CustomerGuidanceDocument = {
 };
 
 export class InMemoryGuidanceStore implements IGuidanceStore {
-  private store = new Map<string, CustomerGuidanceDocument>([
-    ['org-nfum', NFU_GUIDANCE],
+  private store = new Map<string, CustomerGuidanceDocument[]>([
+    ['org-nfum', [NFU_GUIDANCE]],
   ]);
 
   async loadActiveGuidance(customerOrganizationId: string): Promise<CustomerGuidanceDocument | null> {
-    return this.store.get(customerOrganizationId) ?? null;
+    return this.store.get(customerOrganizationId)?.find((doc) => doc.activeFlag) ?? null;
+  }
+
+  async loadAllGuidance(customerOrganizationId: string): Promise<CustomerGuidanceDocument[]> {
+    return [...(this.store.get(customerOrganizationId) ?? [])];
+  }
+
+  async saveGuidance(doc: CustomerGuidanceDocument): Promise<void> {
+    const docs = this.store.get(doc.customerOrganizationId) ?? [];
+    const index = docs.findIndex((candidate) => candidate.instructionSetId === doc.instructionSetId);
+    if (index >= 0) {
+      docs[index] = doc;
+    } else {
+      docs.push(doc);
+    }
+    this.store.set(doc.customerOrganizationId, docs);
+  }
+
+  async activateGuidance(customerOrganizationId: string, instructionSetId: string): Promise<void> {
+    const docs = this.store.get(customerOrganizationId) ?? [];
+    for (const doc of docs) {
+      doc.activeFlag = doc.instructionSetId === instructionSetId;
+      if (doc.activeFlag) {
+        doc.activeFrom = new Date().toISOString();
+      }
+    }
+    this.store.set(customerOrganizationId, docs);
   }
 }

@@ -1,11 +1,14 @@
+import cors from 'cors';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { randomUUID } from 'node:crypto';
 import type { AppDependencies } from './composition.js';
 import { log } from './logger.js';
+import type { CustomerGuidanceDocument } from '@advisor/shared';
 
 export function createApp(deps: AppDependencies): express.Application {
   const app = express();
   app.use(express.json());
+  app.use(cors());
 
   // Correlation ID middleware
   app.use((req: Request, _res: Response, next: NextFunction) => {
@@ -20,6 +23,9 @@ export function createApp(deps: AppDependencies): express.Application {
 
   // Sessions router
   app.use('/sessions', buildSessionsRouter(deps));
+
+  // Admin guidance router
+  app.use('/admin/guidance', buildAdminGuidanceRouter(deps));
 
   // Global error handler
   app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
@@ -157,6 +163,30 @@ function buildSessionsRouter(deps: AppDependencies): express.Router {
     }
   });
 
+  // POST /sessions/:id/feedback
+  router.post('/:id/feedback', async (req: Request, res: Response) => {
+    const correlationId = (req as ReqWithCorr).correlationId;
+    const sessionId = req.params['id'] as string;
+    try {
+      const { rating, comment } = req.body as { rating?: number; comment?: string };
+      if (typeof rating !== 'number' || rating < 1 || rating > 5) {
+        res.status(400).json({ ok: false, error: { code: 'VALIDATION_ERROR', message: 'rating must be a number from 1 to 5', correlationId } });
+        return;
+      }
+      await conversationStore.submitFeedback(sessionId, {
+        userRating: rating,
+        userComment: comment ?? null,
+        reviewStatus: 'pendingStakeholderReview',
+      });
+      const recordedAt = new Date().toISOString();
+      log.info({ correlationId, sessionId, requestType: 'submitFeedback' }, 'Feedback submitted');
+      res.json({ ok: true, data: { sessionId, recordedAt } });
+    } catch (err) {
+      log.error({ correlationId, sessionId, errorCategory: 'SUBMIT_FEEDBACK' }, String(err));
+      res.status(500).json({ ok: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to submit feedback', correlationId } });
+    }
+  });
+
   // GET /sessions/:id/messages/latest
   router.get('/:id/messages/latest', async (req: Request, res: Response) => {
     const correlationId = (req as ReqWithCorr).correlationId;
@@ -242,6 +272,67 @@ function buildSessionsRouter(deps: AppDependencies): express.Router {
     } catch (err) {
       log.error({ correlationId, sessionId, errorCategory: 'END_SESSION' }, String(err));
       res.status(500).json({ ok: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to end session', correlationId } });
+    }
+  });
+
+  return router;
+}
+
+function buildAdminGuidanceRouter(deps: AppDependencies): express.Router {
+  const router = express.Router();
+  const { guidanceStore } = deps;
+
+  type ReqWithCorr = Request & { correlationId: string };
+
+  router.get('/:orgId', async (req: Request, res: Response) => {
+    const correlationId = (req as ReqWithCorr).correlationId;
+    const orgId = req.params['orgId'] as string;
+    try {
+      const docs = await guidanceStore.loadAllGuidance(orgId);
+      res.json({ ok: true, data: docs });
+    } catch (err) {
+      log.error({ correlationId, orgId, errorCategory: 'GUIDANCE_LIST' }, String(err));
+      res.status(500).json({ ok: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to load guidance', correlationId } });
+    }
+  });
+
+  router.post('/:orgId', async (req: Request, res: Response) => {
+    const correlationId = (req as ReqWithCorr).correlationId;
+    const orgId = req.params['orgId'] as string;
+    try {
+      const doc = { ...(req.body as CustomerGuidanceDocument), customerOrganizationId: orgId };
+      await guidanceStore.saveGuidance(doc);
+      res.status(201).json({ ok: true, data: doc });
+    } catch (err) {
+      log.error({ correlationId, orgId, errorCategory: 'GUIDANCE_CREATE' }, String(err));
+      res.status(500).json({ ok: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to save guidance', correlationId } });
+    }
+  });
+
+  router.put('/:orgId/:instructionSetId', async (req: Request, res: Response) => {
+    const correlationId = (req as ReqWithCorr).correlationId;
+    const orgId = req.params['orgId'] as string;
+    const instructionSetId = req.params['instructionSetId'] as string;
+    try {
+      const doc = { ...(req.body as CustomerGuidanceDocument), customerOrganizationId: orgId, instructionSetId };
+      await guidanceStore.saveGuidance(doc);
+      res.json({ ok: true, data: doc });
+    } catch (err) {
+      log.error({ correlationId, orgId, instructionSetId, errorCategory: 'GUIDANCE_UPDATE' }, String(err));
+      res.status(500).json({ ok: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to update guidance', correlationId } });
+    }
+  });
+
+  router.post('/:orgId/:instructionSetId/activate', async (req: Request, res: Response) => {
+    const correlationId = (req as ReqWithCorr).correlationId;
+    const orgId = req.params['orgId'] as string;
+    const instructionSetId = req.params['instructionSetId'] as string;
+    try {
+      await guidanceStore.activateGuidance(orgId, instructionSetId);
+      res.json({ ok: true, data: { activated: true } });
+    } catch (err) {
+      log.error({ correlationId, orgId, instructionSetId, errorCategory: 'GUIDANCE_ACTIVATE' }, String(err));
+      res.status(500).json({ ok: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to activate guidance', correlationId } });
     }
   });
 

@@ -11,16 +11,26 @@
 //   Key Vault Secrets User          : 4633458b-17de-408a-b874-0445c86b69e6
 //   AcrPull                         : 7f951dda-4ed3-4680-a7ca-43fe172d538d
 //   Monitoring Metrics Publisher    : 3913510d-42f4-4e42-8a64-420c390055eb
+//
+// Security note: Search roles are scoped to the specific AI Search
+// resource (not resourceGroup) to enforce least-privilege.
 // ============================================================
 
 param managedIdentityPrincipalId string
 param searchServiceId string
+@description('Name of the AI Search service — used to scope Search RBAC to the specific resource.')
+param searchServiceName string
 param keyVaultName string
 param acrId string
 
 // Existing Key Vault reference for scoping
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
   name: keyVaultName
+}
+
+// Existing AI Search reference — scopes role assignments to this resource, not the RG
+resource searchService 'Microsoft.Search/searchServices@2023-11-01' existing = {
+  name: searchServiceName
 }
 
 // --- Azure AI Search ---
@@ -30,7 +40,7 @@ var searchServiceContributorRoleId = '7ca78c08-252a-4471-8644-bb5ff32d4ba0'
 
 resource searchIndexDataContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(searchServiceId, managedIdentityPrincipalId, searchIndexDataContributorRoleId)
-  scope: resourceGroup()
+  scope: searchService
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', searchIndexDataContributorRoleId)
     principalId: managedIdentityPrincipalId
@@ -41,7 +51,7 @@ resource searchIndexDataContributor 'Microsoft.Authorization/roleAssignments@202
 
 resource searchServiceContributor 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(searchServiceId, managedIdentityPrincipalId, searchServiceContributorRoleId)
-  scope: resourceGroup()
+  scope: searchService
   properties: {
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', searchServiceContributorRoleId)
     principalId: managedIdentityPrincipalId

@@ -70,3 +70,13 @@ npm run clean        # rimraf dist tsconfig.tsbuildinfo per workspace (explicit,
 - `CustomerGuidanceDocument` partition key: `customerOrganizationId`.
 - `AdvisorSession` TTL: `ttlSeconds` field (nullable — null = no expiry).
 - Search result union type: `SimilarProjectMatch[] | NoMatchFound` — implement `isNoMatchFound()` type guard (exported from `@advisor/shared`).
+
+### Wave 5 — Demo & Handoff (2026-05-29)
+
+Produced the Epic 8 handoff package under `agents\advisor\docs\handoff\`:
+- `demo-script.md` — CLI-only mock fast path, full UI walkthrough, NFU Mutual sample flow, admin instruction update, and redeploy/config behavior.
+- `architecture-handoff.md` — endpoint inventory from `app.ts`, intake/session/three-phase/recommendation data flow, infra Mermaid diagram, identity model, and POC-vs-production gaps.
+- `next-phase-backlog.md` — production hardening backlog separated from completed POC criteria.
+- `known-limitations.md` — honest POC limitations, including D1 in-memory no-match limitation and G1 Q8/team-skills mock limitation.
+
+Recorded cross-cutting handoff decisions in `.squad\decisions\inbox\trinity-wave5-handoff.md`. No source code or deployments were changed in this wave.

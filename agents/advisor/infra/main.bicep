@@ -232,6 +232,7 @@ module roleAssignments 'modules/roleassignments.bicep' = {
   params: {
     managedIdentityPrincipalId: identity.outputs.principalId
     searchServiceId: search.outputs.id
+    searchServiceName: search.outputs.name
     keyVaultName: keyvault.outputs.name
     acrId: acr.outputs.id
   }

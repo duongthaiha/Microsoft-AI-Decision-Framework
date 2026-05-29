@@ -1,15 +1,25 @@
 {
   "name": "@advisor/web",
   "version": "0.1.0",
-  "description": "Web front end for the AI Framework Advisor Agent — placeholder (Mouse fills this in)",
+  "private": true,
+  "type": "module",
   "scripts": {
-    "build": "echo 'Web workspace is a placeholder — Mouse will implement the front end'",
-    "typecheck": "echo 'No TypeScript to check yet'"
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@advisor/shared": "*"
+    "@advisor/shared": "*",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.24.0"
   },
   "devDependencies": {
-    "typescript": "^5.5.4"
+    "@types/react": "^18.3.3",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.3.1",
+    "typescript": "^5.5.4",
+    "vite": "^5.3.1"
   }
 }
