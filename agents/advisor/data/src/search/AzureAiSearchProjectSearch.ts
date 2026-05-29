@@ -92,12 +92,6 @@ export class AzureAiSearchProjectSearch implements IProjectSearchService {
   }
 
   async similarProjects(query: SimilarProjectSearchQuery): Promise<SimilarProjectResult> {
-    const select: string[] = [
-      'id', 'projectId', 'title', 'summary', 'technologyTags',
-      'interactionPattern', 'dataPattern', 'governancePattern',
-      'industry', 'businessDomain', 'useCaseTags', 'sensitivityLevel',
-    ];
-
     // Compute OData filter from query.filters
     let filter: string | undefined;
     if (query.filters && Object.keys(query.filters).length > 0) {
@@ -112,17 +106,26 @@ export class AzureAiSearchProjectSearch implements IProjectSearchService {
       if (clauses.length > 0) filter = clauses.join(' and ');
     }
 
-    // Semantic and non-semantic paths are separate so the discriminated union
-    // in SearchRequestQueryTypeOptions is satisfied for each branch.
-    const rawResults = this.options.semanticSearch
-      ? await this.searchClient.search(query.query, {
-          top: query.topK,
-          select,
-          filter,
-          queryType: 'semantic',
-          semanticSearchOptions: { configurationName: 'project-semantic' },
-        })
-      : await this.searchClient.search(query.query, { top: query.topK, select, filter });
+    // BaseSearchRequestOptions also carries queryType?: QueryType, which creates
+    // an intersection with SearchRequestQueryTypeOptions that TypeScript can't
+    // satisfy from a conditional spread. A type assertion is the idiomatic escape hatch.
+    type RawOpts = NonNullable<Parameters<typeof this.searchClient.search>[1]>;
+
+    const baseOpts = {
+      top: query.topK,
+      select: [
+        'id', 'projectId', 'title', 'summary', 'technologyTags',
+        'interactionPattern', 'dataPattern', 'governancePattern',
+        'industry', 'businessDomain', 'useCaseTags', 'sensitivityLevel',
+      ],
+      filter,
+    };
+
+    const opts: RawOpts = this.options.semanticSearch
+      ? ({ ...baseOpts, queryType: 'semantic', semanticSearchOptions: { configurationName: 'project-semantic' } } as RawOpts)
+      : (baseOpts as RawOpts);
+
+    const rawResults = await this.searchClient.search(query.query, opts);
 
     const matches: Array<{
       doc: ProjectSearchDocument;
