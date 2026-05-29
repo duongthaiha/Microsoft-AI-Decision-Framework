@@ -10,7 +10,7 @@ import { createApp } from './app.js';
 import { log } from './logger.js';
 
 const PORT = parseInt(process.env['PORT'] ?? '3000', 10);
-const deps = buildDependencies();
+const deps = await buildDependencies();
 const app = createApp(deps);
 
 app.listen(PORT, () => {

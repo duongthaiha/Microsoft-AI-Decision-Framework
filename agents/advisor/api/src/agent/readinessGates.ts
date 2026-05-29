@@ -20,8 +20,13 @@ export function evaluateReadiness(session: AdvisorSession): ReadinessAssessment 
 
   const hasIntakeSubmission = hasIntake || Object.keys(session.conversationCapture).length > 0;
   const phase1Ready = phase1Turns.length > 0 && answers.some((a) => a.phase === 'phase1.businessImpactAssessment');
-  const phase2Ready = phase2Turns.length > 0 && (answers.some((a) => a.phase === 'phase2.technologyGroupings') || phase2Turns.some((t) => (t.customInstructionAnswersUsed?.length ?? 0) > 0));
-  const phase3Ready = phase3Turns.length > 0 || (phase2Ready && turns.some((t) => t.messageType === 'summary'));
+  // Phase 2 is ready only when the user has sent at least one Phase 2 answer.
+  // customInstructionAnswersUsed on an agent turn means the agent pre-answered questions from org
+  // instructions, but the user still needs to respond before Phase 2 is considered complete.
+  const phase2Ready = phase2Turns.length > 0 && answers.some((a) => a.phase === 'phase2.technologyGroupings');
+  // Phase 3 is ready once the orchestrator has generated a Phase 3 summary/recommendation turn.
+  // The intake system turn also has messageType='summary' so we must scope to phase3 agent turns only.
+  const phase3Ready = phase3Turns.length > 0;
 
   const missingEvidence: string[] = [];
   if (!hasIntakeSubmission) missingEvidence.push('Intake form not yet submitted');

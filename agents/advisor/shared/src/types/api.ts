@@ -145,3 +145,19 @@ export interface EndSessionResponse {
   sessionId: string;
   endedAt: string;
 }
+
+// ---------------------------------------------------------------------------
+// POST /sessions/:id/feedback — submit recommendation usefulness rating
+// ---------------------------------------------------------------------------
+
+export interface SubmitFeedbackRequest {
+  /** 1 (not useful) to 5 (very useful) */
+  rating: number;
+  /** Optional free-text reason */
+  comment?: string;
+}
+
+export interface SubmitFeedbackResponse {
+  sessionId: string;
+  recordedAt: string;
+}

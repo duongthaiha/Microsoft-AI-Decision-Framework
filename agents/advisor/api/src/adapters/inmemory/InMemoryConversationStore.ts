@@ -1,8 +1,10 @@
 import type { IConversationStore } from '@advisor/shared';
 import type { AdvisorSession, ConversationTurn, CapturedFact, ConversationReadinessState } from '@advisor/shared';
+import type { ProjectFeedback } from '@advisor/shared';
 
 export class InMemoryConversationStore implements IConversationStore {
   private sessions = new Map<string, AdvisorSession>();
+  private feedbackStore = new Map<string, ProjectFeedback>();
 
   async createSession(session: AdvisorSession): Promise<void> {
     this.sessions.set(session.sessionId, { ...session });
@@ -44,5 +46,14 @@ export class InMemoryConversationStore implements IConversationStore {
     session.conversationCapture.endedAt = endedAt;
     session.conversationCapture.readinessState = 'ended';
     session.updatedAt = new Date().toISOString();
+  }
+
+  async submitFeedback(sessionId: string, feedback: ProjectFeedback): Promise<void> {
+    if (!this.sessions.has(sessionId)) throw new Error(`Session not found: ${sessionId}`);
+    this.feedbackStore.set(sessionId, { ...feedback });
+  }
+
+  async loadFeedback(sessionId: string): Promise<ProjectFeedback | null> {
+    return this.feedbackStore.get(sessionId) ?? null;
   }
 }

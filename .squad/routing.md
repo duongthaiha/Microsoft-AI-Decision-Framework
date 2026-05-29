@@ -6,12 +6,15 @@ How to decide who handles what.
 
 | Work Type | Route To | Examples |
 |-----------|----------|----------|
-| {domain 1} | {Name} | {example tasks} |
-| {domain 2} | {Name} | {example tasks} |
-| {domain 3} | {Name} | {example tasks} |
-| Code review | {Name} | Review PRs, check quality, suggest improvements |
-| Testing | {Name} | Write tests, find edge cases, verify fixes |
-| Scope & priorities | {Name} | What to build next, trade-offs, decisions |
+| Architecture, scope, decisions, code review | Trinity | API boundaries, arch handoff, open decisions, reviewer gate |
+| Backend / agent runtime | Tank | Headless API, Copilot SDK integration, agent instructions, custom tools, three-phase behavior |
+| Data & contracts | Switch | Cosmos DB schema, Azure AI Search index, intake/project contracts, seed data, similar-project search |
+| Infrastructure & deployment | Dozer | Bicep modules, azure.yaml, azd, deployment runbook, validation |
+| Security & networking | Ghost | Identity/RBAC, managed identity, private endpoints, Key Vault, public-data lockdown |
+| Frontend / UX | Mouse | Intake form UI, conversation UI, recommendation view, admin instruction UI |
+| Testing & evaluation | Apoc | CLI harness, NFU Mutual regression, recommendation eval cases, deployment validation |
+| Code review | Trinity | Review PRs, check quality, reviewer gate |
+| Scope & priorities | Trinity | What to build next, trade-offs, decisions |
 | Session logging | Scribe | Automatic — never needs routing |
 
 ## Issue Routing

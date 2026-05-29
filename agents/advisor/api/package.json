@@ -10,7 +10,8 @@
     "clean": "rimraf dist tsconfig.tsbuildinfo",
     "typecheck": "tsc --noEmit",
     "start": "node dist/index.js",
-    "dev": "node --watch dist/index.js"
+    "dev": "node --watch dist/index.js",
+    "test": "vitest run"
   },
   "dependencies": {
     "@advisor/shared": "*",
@@ -24,6 +25,7 @@
     "@types/cors": "^2.8.17",
     "@types/node": "^20.0.0",
     "rimraf": "^6.0.1",
-    "typescript": "^5.5.4"
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.0"
   }
 }

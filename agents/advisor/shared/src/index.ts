@@ -105,6 +105,8 @@ export type {
   RetrieveRecommendationResponse,
   RetrieveSimilarProjectsResponse,
   EndSessionResponse,
+  SubmitFeedbackRequest,
+  SubmitFeedbackResponse,
 } from './types/api.js';
 
 // Validators

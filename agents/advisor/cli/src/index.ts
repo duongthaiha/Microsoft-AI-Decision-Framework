@@ -44,7 +44,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const deps = (buildDependencies as any)();
+  const deps = await (buildDependencies as any)();
   const { conversationStore, orchestrator } = deps;
 
   // ── Step 1: Load intake form and build submission ────────────────────────

@@ -24,15 +24,87 @@ export interface AppDependencies {
   skillPath: string;
 }
 
-export function buildDependencies(): AppDependencies {
+export async function buildDependencies(): Promise<AppDependencies> {
   const mode = process.env['ADVISOR_AGENT_MODE'] ?? 'mock';
   log.info({ requestType: 'startup', agentMode: mode }, `Building dependencies in ${mode} mode`);
 
-  const conversationStore = new InMemoryConversationStore();
-  const guidanceStore = new InMemoryGuidanceStore();
-  const projectSearch = new InMemoryProjectSearch();
-  const frameworkRetrieval = new InMemoryFrameworkRetrieval(SKILL_PATH);
+  // -------------------------------------------------------------------------
+  // Azure mode — real adapters when COSMOS_ENDPOINT + SEARCH_ENDPOINT are set
+  // -------------------------------------------------------------------------
+  const cosmosEndpoint = process.env['COSMOS_ENDPOINT'];
+  const searchEndpoint = process.env['SEARCH_ENDPOINT'];
+  const useAzure = Boolean(cosmosEndpoint && searchEndpoint);
 
+  let conversationStore: IConversationStore;
+  let guidanceStore: IGuidanceStore;
+  let projectSearch: IProjectSearchService;
+  let frameworkRetrieval: IFrameworkRetrievalService;
+
+  if (useAzure) {
+    log.info({}, 'COSMOS_ENDPOINT + SEARCH_ENDPOINT detected — using real Azure adapters');
+    const databaseId = process.env['COSMOS_DATABASE'] ?? 'advisor';
+    const sessionsContainer = process.env['COSMOS_SESSIONS_CONTAINER'] ?? 'sessions';
+    const guidanceContainer = process.env['COSMOS_GUIDANCE_CONTAINER'] ?? 'guidance';
+    const projectIndex = process.env['SEARCH_INDEX'] ?? 'project-knowledge';
+    const frameworkIndex = process.env['FRAMEWORK_INDEX'] ?? 'framework-content';
+
+    // Dynamic import to avoid bundling Azure SDKs when not needed.
+    // These imports are awaited lazily — the real adapters only activate at
+    // runtime when the env vars are present. For compile-time correctness the
+    // imports resolve correctly; at runtime without Azure creds they will fail
+    // on first use (guard behavior is intentional).
+    const {
+      CosmosConversationStore,
+      CosmosGuidanceStore,
+      AzureAiSearchProjectSearch,
+      AzureAiSearchFrameworkRetrieval,
+    } = await import('@advisor/data').catch(() => {
+      throw new Error(
+        'Failed to load @advisor/data. Ensure the data workspace is built: npm run build:data'
+      );
+    }) as typeof import('@advisor/data');
+
+    const cosmosConvStore = new CosmosConversationStore({
+      endpoint: cosmosEndpoint!,
+      databaseId,
+      containerId: sessionsContainer,
+    });
+    const cosmosGuidanceStore = new CosmosGuidanceStore({
+      endpoint: cosmosEndpoint!,
+      databaseId,
+      containerId: guidanceContainer,
+    });
+
+    // Initialize containers (createIfNotExists). Failures here are fatal.
+    await cosmosConvStore.initialize();
+    await cosmosGuidanceStore.initialize();
+
+    conversationStore = cosmosConvStore;
+    guidanceStore = cosmosGuidanceStore;
+
+    projectSearch = new AzureAiSearchProjectSearch({
+      endpoint: searchEndpoint!,
+      indexName: projectIndex,
+    });
+
+    frameworkRetrieval = new AzureAiSearchFrameworkRetrieval({
+      endpoint: searchEndpoint!,
+      indexName: frameworkIndex,
+      skillPath: SKILL_PATH,
+    });
+
+    log.info({}, 'Azure adapters initialised');
+  } else {
+    log.info({}, 'No COSMOS_ENDPOINT/SEARCH_ENDPOINT — using in-memory adapters (offline mode)');
+    conversationStore = new InMemoryConversationStore();
+    guidanceStore = new InMemoryGuidanceStore();
+    projectSearch = new InMemoryProjectSearch();
+    frameworkRetrieval = new InMemoryFrameworkRetrieval(SKILL_PATH);
+  }
+
+  // -------------------------------------------------------------------------
+  // Copilot SDK service — independent of the Azure data layer
+  // -------------------------------------------------------------------------
   let copilotService: ICopilotSessionService;
   if (mode === 'copilot') {
     log.info({}, 'Using RealCopilotSessionService — requires GITHUB_TOKEN or COPILOT_TOKEN');

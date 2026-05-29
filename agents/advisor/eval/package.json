@@ -1,0 +1,19 @@
+{
+  "name": "@advisor/eval",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Recommendation evaluation cases for the AI Framework Advisor Agent POC",
+  "private": true,
+  "scripts": {
+    "test": "vitest run",
+    "eval": "vitest run --reporter=verbose"
+  },
+  "dependencies": {
+    "@advisor/shared": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.5.4",
+    "vitest": "^2.0.0"
+  }
+}

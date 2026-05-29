@@ -1,0 +1,30 @@
+{
+  "name": "@advisor/data",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Azure Cosmos DB and Azure AI Search adapters for the AI Framework Advisor Agent POC",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc --build",
+    "clean": "rimraf dist tsconfig.tsbuildinfo",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@advisor/shared": "*",
+    "@azure/cosmos": "^4.1.1",
+    "@azure/search-documents": "^12.1.0",
+    "@azure/identity": "^4.4.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.5.4"
+  }
+}
