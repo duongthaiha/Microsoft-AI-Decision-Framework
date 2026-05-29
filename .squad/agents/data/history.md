@@ -30,3 +30,14 @@
 #### Literal types
 
 - `CapabilityGrouping` uses dot-notation camelCase: `'grouping3.buildAiAppsAndAgents'`, NOT PascalCase. `frameworkTags` on `ProjectKnowledgeDocument` accepts `(PhaseTag | CapabilityGrouping)[]` — both in the same array is valid.
+
+---
+
+## Cross-Agent Note — Dozer Deployment Validation (2026-05-29T17:44:22Z)
+
+**From:** Scribe (orchestration summary)  
+**Status:** Infrastructure live in swedencentral  
+**Cosmos DB:** Private endpoint verified, session write/read roundtrip successful  
+**AI Search:** Private endpoint verified, service running, indexes NOT YET SEEDED  
+
+**Action Required (Wave 3):** Run seed job to populate `advisor-project-knowledge` and `framework-content` indexes. Live endpoint ready at https://ca-advisor-33wfyfewrvjcg.redplant-6456c196.swedencentral.azurecontainerapps.io for testing once indexes are populated.

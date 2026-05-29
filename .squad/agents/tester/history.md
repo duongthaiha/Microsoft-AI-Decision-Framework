@@ -54,3 +54,15 @@ Combined effect: with NFU Mutual (3 custom instructions), after Phase 1 answer â
 **Flags for Tank:**
 
 See `.squad/decisions/inbox/tester-eval-and-regression.md` for defects and gaps raised.
+
+---
+
+## Cross-Agent Note â€” Dozer Deployment Validation (2026-05-29T17:44:22Z)
+
+**From:** Scribe (orchestration summary)  
+**Status:** Live deployment validated in swedencentral  
+**Live URL:** https://ca-advisor-33wfyfewrvjcg.redplant-6456c196.swedencentral.azurecontainerapps.io  
+
+Apoc: Regression suite now has live endpoint for integration testing. Cold-start only (min-replicas=0); set to 1 for smoother test runs.
+
+**Known gap:** AI Search indexes not seeded yet (Wave 3). GET /similar-projects returns 500 until seed job runs.

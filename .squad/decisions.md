@@ -519,6 +519,277 @@ The mock agent always recommends Copilot Studio as the primary technology regard
 
 ---
 
+
+---
+
+# Deployment Decision Record — advisor-poc
+
+**Author:** Dozer (DevOps)  
+**Date:** 2026-05-29T18:44:22+01:00  
+**Env:** advisor-poc  
+**Region:** swedencentral  
+**Subscription:** 3d2c527a-481d-4e13-b3a1-637924b33343 (MCAP managed env)  
+**Resource group:** rg-advisor-advisor-poc  
+**Status:** ✅ DEPLOYED AND VALIDATED
+
+---
+
+## 1. Region Choice — Why swedencentral, Not eastus2
+
+**Planned region:** `eastus2` (per preflight recommendation)  
+**Actual region:** `swedencentral`
+
+**Root cause of switch:**
+
+Deployment history reveals three attempts:
+
+| Deployment name | Region | Outcome | Time |
+|---|---|---|---|
+| advisor-poc-1780071275 | eastus2 | **FAILED** | 2026-05-29T16:24 UTC |
+| advisor-poc-1780072974 | eastus2 | Succeeded (empty outputs) | 2026-05-29T16:42 UTC |
+| advisor-poc-1780073009 | swedencentral | **Succeeded — LIVE** | 2026-05-29T17:02 UTC |
+
+The first eastus2 attempt failed with HTTP 409 `Conflict` on the `Microsoft.Search/searchServices`
+module. AI Search service names are **globally unique**. A prior partial deployment or test run had
+left a Search resource in the same name space (`srch-advisor-<token>`) in a "Deleting" state,
+causing the conflict. Quota was NOT the cause — eastus2 shows 0/12 Basic quota used at time of
+writing.
+
+After the conflict, the coordinator changed `AZURE_LOCATION` to `swedencentral` where no naming
+conflict existed. The second eastus2 deployment that "succeeded" had empty outputs — likely an
+infra-only partial run without app configuration. The swedencentral run completed cleanly with all
+outputs populated.
+
+**EU data residency:** swedencentral is an acceptable choice for POC purposes; for production
+it provides EU data residency (Sweden) which aligns with typical enterprise compliance posture.
+
+---
+
+## 2. Final URLs and Resource Inventory
+
+| Resource | Name | Status |
+|---|---|---|
+| Container App | `ca-advisor-33wfyfewrvjcg` | Running |
+| **Public FQDN** | `https://ca-advisor-33wfyfewrvjcg.redplant-6456c196.swedencentral.azurecontainerapps.io` | ✅ Healthy |
+| Active revision | `ca-advisor-33wfyfewrvjcg--azd-1780075724` | Running |
+| Container image | `acradvisor33wfyfewrvjcg.azurecr.io/advisor/api-advisor-poc:azd-deploy-1780074268` | — |
+| Cosmos DB | `cosmos-advisor-33wfyfewrvjcg` | Succeeded, public=Disabled |
+| AI Search | `srch-advisor-33wfyfewrvjcg` | running, public=Disabled |
+| Key Vault | `kv-33wfyfewrvjcg` | — |
+| Managed identity | `id-advisor-33wfyfewrvjcg` | clientId=e7054a1b-5533-4293-89a7-e9b4fb0a8abd |
+| Container Registry | `acradvisor33wfyfewrvjcg` | — |
+| Log Analytics | `log-advisor-33wfyfewrvjcg` | workspaceId=32f76c79-31b5-4f70-aaac-aa15e5a2ae51 |
+| App Insights | `appi-advisor-33wfyfewrvjcg` | Succeeded |
+| VNet | present | 10.0.0.0/16 + ACA subnet + PE subnet |
+
+---
+
+## 3. Adapter Mode — Confirmed
+
+**Key finding:** `ADVISOR_AGENT_MODE=mock` in the azd env does NOT mean mock adapters are active.
+The composition root (`composition.ts`) uses TWO independent flags:
+
+- `ADVISOR_AGENT_MODE` → controls the **LLM/Copilot service** only (mock vs real Copilot SDK)
+- `COSMOS_ENDPOINT` + `SEARCH_ENDPOINT` presence → controls the **data adapters** (in-memory vs real Azure)
+
+Since both endpoints are injected by Bicep, the container boots into:
+
+```
+Data layer:   REAL Azure adapters (CosmosConversationStore + CosmosGuidanceStore + AzureAiSearchProjectSearch)
+LLM layer:    MockCopilotSessionService (deterministic, no external LLM calls)
+```
+
+Startup logs confirm:
+```json
+{"level":"INFO","message":"COSMOS_ENDPOINT + SEARCH_ENDPOINT detected — using real Azure adapters"}
+{"level":"INFO","message":"Azure adapters initialised"}
+{"level":"INFO","message":"Using MockCopilotSessionService (deterministic, no LLM)"}
+{"level":"INFO","message":"@advisor/api listening on port 3000"}
+```
+
+**To enable real LLM:** set `ADVISOR_AGENT_MODE=copilot` and inject `GITHUB_TOKEN` or
+`COPILOT_TOKEN` into the container. This is a deferred POC step.
+
+---
+
+## 4. Validation Outcomes
+
+### 4.1 API Health
+| Check | Result | Detail |
+|---|---|---|
+| `GET /health` | ✅ HTTP 200 | `{"ok":true,"service":"@advisor/api"}` in 1.86s |
+| CORS header | ✅ Present | `Access-Control-Allow-Origin: *` |
+| Ingress | ✅ External | targetPort=3000, HTTP, external=true |
+
+### 4.2 Cosmos DB — Private Endpoint Connectivity
+| Check | Result | Detail |
+|---|---|---|
+| Service state | ✅ | `provisioningState: Succeeded`, `publicNetworkAccess: Disabled` |
+| `sessions` container exists | ✅ | TTL=-1 (items expire only with per-item TTL) |
+| `guidance` container exists | ✅ | No TTL (guidance is persistent) |
+| Container can create sessions | ✅ PROVEN | `POST /sessions` → HTTP 201, sessionId returned |
+| Container can write + read back | ✅ PROVEN | `POST /sessions/:id/intake` → HTTP 200, agent turn returned (requires Cosmos read+write) |
+| **Private endpoint reachable from ACA** | ✅ PROVEN | Live session data flowing through private endpoint |
+
+### 4.3 AI Search — Private Endpoint Connectivity
+| Check | Result | Detail |
+|---|---|---|
+| Service state | ✅ | `provisioningState: succeeded`, `status: running`, `publicNetworkAccess: Disabled` |
+| **Private endpoint reachable from ACA** | ✅ PROVEN | Container returned `RestError: The index 'advisor-project-knowledge' was not found` — this is an **application-level** 404 from the Search API, proving the VNet+private endpoint path is working. A network failure would produce a connection error, not an index-not-found response. |
+| Index `advisor-project-knowledge` exists | ❌ NOT SEEDED | Index does not exist yet — see POC limitations |
+| Index `framework-content` exists | ❌ NOT SEEDED | Index does not exist yet |
+
+### 4.4 Application Insights / Log Analytics
+| Check | Result | Detail |
+|---|---|---|
+| App Insights resource | ✅ | `provisioningState: Succeeded`, instrumentation key present |
+| Log Analytics receiving telemetry | ✅ | 5 container log records at 17:57, 3 at 17:52, 5 at 17:46 |
+| Connection string in container env | ✅ | `APPLICATIONINSIGHTS_CONNECTION_STRING` injected |
+
+### 4.5 Cold-Start Diagnosis
+| Finding | Detail |
+|---|---|
+| `min-replicas` | 0 (scale-to-zero) |
+| `restartCount` | 0 (no crash loops) |
+| Container started | 2026-05-29T17:46:21 UTC |
+| Coordinator health timeout | Was during a cold start period (container was idle, first request triggered scale-up) |
+| Fix applied | None needed — cold start is expected at min-replicas=0 |
+
+**Recommendation:** For demos or load testing, set `min-replicas=1` to eliminate cold starts.
+For POC cost control, 0 is acceptable.
+
+---
+
+## 5. Fixes Applied
+
+None required. The deployment was valid as-is:
+- Adapter mode is correctly wired (real Azure data + mock LLM)
+- No container env vars were changed
+- No redeploy was triggered
+
+---
+
+## 6. Known POC Limitations
+
+| Limitation | Impact | Resolution path |
+|---|---|---|
+| AI Search indexes not seeded | `GET /similar-projects` returns 500 (Search_FAILURE) | Run `data` workspace seed job: `cd agents/advisor && npm run seed` (pending Wave 3) |
+| MockCopilotSessionService | No real LLM reasoning — deterministic responses | Set `ADVISOR_AGENT_MODE=copilot` + inject `GITHUB_TOKEN` |
+| `min-replicas=0` | Cold starts (30-60s on first request after idle) | Set `min-replicas=1` for demos |
+| No authentication gate | API is public, no bearer token/APIM guard | Deferred per Ghost (AD-06, AD-07) |
+| Cosmos TTL=-1 on sessions | Sessions persist indefinitely unless items set TTL | Set `defaultTtl` to positive value (e.g. 604800 = 7 days) in Wave 3 |
+| East US 2 resource orphan risk | Partially created eastus2 resources (deployment 1780072974) may still exist | Verify no eastus2 orphan RG exists; if so, clean up manually |
+| No APIM | Direct ACA ingress, no API gateway layer | Deferred per AD-07 |
+
+---
+
+## 7. Next Steps for Team
+
+- **Tank / Researcher**: Implement and run the data seed job to populate `advisor-project-knowledge` and `framework-content` indexes in swedencentral.
+- **Ghost**: Review public API exposure — add APIM or auth guard per AD-06/AD-07 before any external demo.
+- **Coordinator**: Update any docs referencing eastus2 as the target region → swedencentral.
+- **Dozer**: Set `min-replicas=1` in containerapp.bicep before any live demo. Consider updating Cosmos sessions TTL to 604800.
+
+
+---
+
+# Decision: Pre-Deployment Region Selection — Advisor Agent POC
+
+**Status:** Recommended (pending azd up)
+**Date:** 2026-05-29T17:06:14+01:00
+**Author:** Dozer (DevOps/Infrastructure)
+**Requested by:** Ha Duong (haduong)
+
+---
+
+## Context
+
+Pre-deployment preflight run against subscription `ME-MngEnvMCAP734518-haduong-1`
+(`3d2c527a-481d-4e13-b3a1-637924b33343`) using the new read-only script at:
+
+```
+agents/advisor/infra/scripts/preflight-availability.ps1
+```
+
+Candidate regions checked: `eastus2`, `swedencentral`, `westeurope`, `uksouth`.
+
+---
+
+## Preflight Summary
+
+### Resource Providers
+All 9 required providers are **Registered**. No action needed before `azd up`.
+
+### Regional Availability
+
+| Region | Result | AI Search Basic Quota |
+|---|---|---|
+| eastus2 | **GO** | 0 used / 12 limit |
+| swedencentral | **GO** | 0 used / 12 limit |
+| westeurope | **GO** | 0 used / 12 limit |
+| uksouth | **GO** | 1 used / 12 limit |
+
+All services pass in all four regions:
+Container Apps, Cosmos DB, AI Search Basic, Key Vault Standard, ACR Basic,
+Log Analytics PerGB2018, App Insights, VNet/private endpoints, managed identity.
+
+### Azure Policy
+- Policy `797b37f7` (Cosmos DB public network access deny) **not found** at
+  subscription scope. May be applied at Management Group level.
+- Our Bicep sets `publicNetworkAccess='Disabled'` + private endpoint — **aligned**
+  with this policy regardless of where it is assigned. Creation should succeed.
+- 5 Cosmos DB policy state records exist from prior resources; non-blocking.
+- **No blockers detected.**
+
+---
+
+## Decision
+
+### Recommended region: `eastus2`
+
+**Rationale:**
+1. First candidate in the default list — matches azd/team convention of preferring
+   `eastus2` for US-based managed environments.
+2. Zero AI Search Basic instances consumed (12 available). Maximum headroom.
+3. No prior Advisor infra resources in this region — clean slate.
+4. All 7 service checks pass cleanly.
+
+### Alternative: `swedencentral`
+- Equal GO status, zero quota used.
+- Preferred if EU data residency is required.
+- Use: `azd env set AZURE_LOCATION swedencentral`
+
+### AI Search quota fallback
+If Basic SKU quota is ever exhausted in the chosen region:
+1. Try `swedencentral` or `westeurope` (0/12 each).
+2. Request quota increase: https://aka.ms/azuresearchquota
+3. Or set `deploySearch=false` (infra note from Wave 1 — param to add if needed).
+
+---
+
+## Action Required Before `azd up`
+
+```bash
+# Set the region (eastus2 is the recommendation)
+azd env set AZURE_LOCATION eastus2
+
+# Run the deployment
+azd up
+```
+
+No provider registrations, quota requests, or policy remediations needed.
+
+---
+
+## Open Items (carry forward)
+
+- Policy 797b37f7 confirmed NOT at subscription scope. If Cosmos DB creation fails
+  with a policy error, check Management Group assignments in the Azure portal.
+  Our private-endpoint design is aligned — escalate to MCAP tenant admin if blocked.
+- Key Vault purge protection is ENABLED (7-day soft-delete). Plan for this in teardown
+  procedures — purged KVs cannot be immediately recreated with the same name.
+
+
 ## Reviewer flag R1 — IConversationStore breaking change
 
 **Affects:** `shared/src/interfaces/IConversationStore.ts`
@@ -535,3 +806,4 @@ Two new methods were added to `IConversationStore`:
 ## Note N1 — `_intake` session pattern is temporary
 
 The orchestrator attaches `_intake` as a non-typed property via `session as AdvisorSession & { _intake?: IntakeSubmission }`. Tests mirror this pattern. Tank's history notes this should become an explicit field in `AdvisorSession` in Wave 3 — when that happens, test helpers (`makeSession`, `makeEvalSession`) should be updated to set the field directly rather than casting.
+

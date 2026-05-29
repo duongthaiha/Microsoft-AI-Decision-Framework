@@ -31,9 +31,9 @@ services:
     language: ts
     host: containerapp
     docker:
-      # Dockerfile at workspace root (agents/advisor/Dockerfile)
-      # Context is agents/advisor/ so it can reach all npm workspaces
-      path: ./Dockerfile
-      context: .
+      # Dockerfile is at agents/advisor/ (workspace root), one level above api/.
+      # azd resolves docker.path and context relative to the project directory.
+      path: ../Dockerfile
+      context: ..
       # Docker daemon not available in this environment — use ACR Tasks for remote build
       remoteBuild: true
