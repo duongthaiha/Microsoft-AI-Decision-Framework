@@ -1,5 +1,22 @@
+# =============================================================================
+# Live smoke test for the AI Framework Advisor in copilot mode (Foundry GPT-5 BYOK).
+#
+# Drives a full Phase 1 -> 2 -> 3 flow against the deployed API and prints the
+# real, framework-grounded RecommendationOutput. Use this to validate copilot
+# mode after a deploy (the unit suite only exercises a fake SDK client).
+#
+# Usage:
+#   pwsh scripts/smoke-copilot.ps1 [-BaseUrl https://<app-fqdn>]
+#
+# Note: request bodies are sent as UTF-8 BYTE ARRAYS. The NFU sample intake
+# contains em-dash characters; sending a string body can truncate it via a
+# Content-Length mismatch, which body-parser then rejects as malformed JSON.
+# =============================================================================
+param(
+  [string]$BaseUrl = "https://ca-advisor-33wfyfewrvjcg.redplant-6456c196.swedencentral.azurecontainerapps.io"
+)
 $ErrorActionPreference = 'Stop'
-$base = "https://ca-advisor-33wfyfewrvjcg.redplant-6456c196.swedencentral.azurecontainerapps.io"
+$base = $BaseUrl.TrimEnd('/')
 
 function PostJson($url, $body, $timeout = 240) {
   $json = $body | ConvertTo-Json -Depth 12

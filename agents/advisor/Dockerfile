@@ -12,7 +12,7 @@
 # ============================================================
 
 # Stage 1: Build
-FROM node:20-slim AS builder
+FROM node:24-slim AS builder
 
 WORKDIR /app
 
@@ -38,7 +38,11 @@ RUN npm run build --workspace=@advisor/api
 # ============================================================
 # Stage 2: Production runner
 # ============================================================
-FROM node:20-slim AS runner
+# Node 24 (LTS) is required because the GitHub Copilot CLI imports the
+# `node:sqlite` built-in module, which is only available (stable, no flag) in
+# Node 22.5+/24. On Node 20 the CLI subprocess crashes with
+# ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite.
+FROM node:24-slim AS runner
 
 WORKDIR /app
 ENV NODE_ENV=production

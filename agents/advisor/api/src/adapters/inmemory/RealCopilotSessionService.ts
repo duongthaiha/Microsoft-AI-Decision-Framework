@@ -218,6 +218,63 @@ export class RealCopilotSessionService implements ICopilotSessionService {
     return { sdk, client: this.client };
   }
 
+  /** Discard the current client so the next ensureClient() spawns a fresh CLI. */
+  private resetClient(): void {
+    const stale = this.client;
+    this.client = null;
+    if (stale?.stop) {
+      void Promise.resolve(stale.stop()).catch(() => undefined);
+    }
+  }
+
+  /** True for errors that indicate the CLI subprocess was not (yet) reachable. */
+  private isTransientCliError(err: unknown): boolean {
+    const msg = String(err instanceof Error ? err.message : err).toLowerCase();
+    return (
+      msg.includes('connection is closed') ||
+      msg.includes('cli server exited') ||
+      msg.includes('connection refused') ||
+      msg.includes('econnrefused') ||
+      msg.includes('not connected')
+    );
+  }
+
+  private delay(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Create an SDK session, retrying on transient CLI connection errors.
+   *
+   * The SDK auto-spawns the Copilot CLI subprocess lazily. The first call after
+   * a container start (or after the CLI restarts) can race the subprocess
+   * becoming ready and fails with "Connection is closed". We reset the client
+   * (forcing a fresh CLI spawn) and retry with a short backoff so the first
+   * real request after a cold start succeeds instead of surfacing a 500.
+   */
+  private async createSdkSession(cfg: Record<string, unknown>): Promise<SdkSessionLike> {
+    const maxAttempts = 3;
+    let lastErr: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const { client } = await this.ensureClient();
+        return await client.createSession(cfg);
+      } catch (err) {
+        lastErr = err;
+        if (!this.isTransientCliError(err) || attempt === maxAttempts) {
+          throw err;
+        }
+        log.warn(
+          { attempt, sdkError: String(err) },
+          'Transient Copilot CLI connection error — resetting client and retrying',
+        );
+        this.resetClient();
+        await this.delay(attempt * 1000);
+      }
+    }
+    throw lastErr;
+  }
+
   /**
    * Map transport-agnostic CopilotTool[] to SDK defineTool objects.
    * Handlers are RETAINED, and skipPermission is set so these read-only
@@ -261,9 +318,10 @@ export class RealCopilotSessionService implements ICopilotSessionService {
   }
 
   async createSession(config: CopilotSessionConfig, tools: CopilotTool[]): Promise<CopilotSessionHandle> {
-    const { sdk, client } = await this.ensureClient();
+    const sdk = await this.sdk();
     const provider = await this.buildProvider();
-    const session = await client.createSession(this.sessionConfig(config.systemPrompt, tools, sdk, provider));
+    const cfg = this.sessionConfig(config.systemPrompt, tools, sdk, provider);
+    const session = await this.createSdkSession(cfg);
     this.sessions.set(session.sessionId, session);
     return { sessionId: config.organizationId, copilotSdkSessionId: session.sessionId };
   }
@@ -274,9 +332,10 @@ export class RealCopilotSessionService implements ICopilotSessionService {
     if (this.sessions.has(copilotSdkSessionId)) {
       return { sessionId: copilotSdkSessionId, copilotSdkSessionId };
     }
-    const { sdk, client } = await this.ensureClient();
+    const sdk = await this.sdk();
     const provider = await this.buildProvider();
-    const session = await client.createSession(this.sessionConfig(undefined, tools, sdk, provider));
+    const cfg = this.sessionConfig(undefined, tools, sdk, provider);
+    const session = await this.createSdkSession(cfg);
     this.sessions.set(session.sessionId, session);
     return { sessionId: copilotSdkSessionId, copilotSdkSessionId: session.sessionId };
   }

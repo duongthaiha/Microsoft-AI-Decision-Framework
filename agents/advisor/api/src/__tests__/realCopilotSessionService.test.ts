@@ -236,3 +236,96 @@ describe('RealCopilotSessionService — Azure AI Foundry BYOK', () => {
     expect((fake.captured[1]!.config['provider'] as Record<string, unknown>)['bearerToken']).toBe('token-2');
   });
 });
+
+describe('RealCopilotSessionService — cold-start CLI resilience', () => {
+  const ORIGINAL = { ...process.env };
+  let SKILL_DIR = '';
+
+  beforeAll(() => {
+    SKILL_DIR = mkdtempSync(join(tmpdir(), 'advisor-skill-retry-'));
+    writeFileSync(join(SKILL_DIR, 'SKILL.md'), '# Test Skill\n');
+  });
+  afterAll(() => {
+    rmSync(SKILL_DIR, { recursive: true, force: true });
+  });
+  beforeEach(() => {
+    process.env['GITHUB_TOKEN'] = 'gho_test';
+    delete process.env['AZURE_OPENAI_ENDPOINT'];
+  });
+  afterEach(() => {
+    process.env = { ...ORIGINAL };
+  });
+
+  /** Loader whose client throws a transient connection error for the first `failures` createSession calls. */
+  function makeFlakyLoader(failures: number): { loader: CopilotSdkLoader; attempts: () => number; clientCount: () => number } {
+    let attempts = 0;
+    let clientCount = 0;
+    const loaded: LoadedSdk = {
+      createClient: () => {
+        clientCount += 1;
+        const client: SdkClientLike = {
+          async createSession(config: Record<string, unknown>): Promise<SdkSessionLike> {
+            attempts += 1;
+            if (attempts <= failures) {
+              throw new Error('Connection is closed.');
+            }
+            return {
+              sessionId: `sdk-${attempts}`,
+              async sendAndWait() {
+                return { data: { content: 'ok' } };
+              },
+              async disconnect() {},
+            };
+          },
+          async stop() {
+            return undefined;
+          },
+        };
+        return client;
+      },
+      defineTool: (name, config) => ({ name, ...config }),
+    };
+    return { loader: { async load() { return loaded; } }, attempts: () => attempts, clientCount: () => clientCount };
+  }
+
+  it('retries on a transient "Connection is closed" error and respawns the client', async () => {
+    const flaky = makeFlakyLoader(1);
+    const svc = new RealCopilotSessionService(SKILL_DIR, flaky.loader, 'gpt-5');
+
+    const handle = await svc.createSession({ organizationId: 'o', skillPath: SKILL_DIR, systemPrompt: 's' }, []);
+
+    expect(handle.copilotSdkSessionId).toBe('sdk-2');
+    expect(flaky.attempts()).toBe(2); // first failed, second succeeded
+    expect(flaky.clientCount()).toBe(2); // client was reset + respawned after the failure
+  });
+
+  it('gives up after the max attempts and surfaces the transient error', async () => {
+    const flaky = makeFlakyLoader(99);
+    const svc = new RealCopilotSessionService(SKILL_DIR, flaky.loader, 'gpt-5');
+
+    await expect(
+      svc.createSession({ organizationId: 'o', skillPath: SKILL_DIR, systemPrompt: 's' }, []),
+    ).rejects.toThrow(/Connection is closed/i);
+    expect(flaky.attempts()).toBe(3); // maxAttempts
+  });
+
+  it('does NOT retry on a non-transient error', async () => {
+    let attempts = 0;
+    const loaded: LoadedSdk = {
+      createClient: () => ({
+        async createSession(): Promise<SdkSessionLike> {
+          attempts += 1;
+          throw new Error('invalid model deployment');
+        },
+        async stop() { return undefined; },
+      }),
+      defineTool: (name, config) => ({ name, ...config }),
+    };
+    const svc = new RealCopilotSessionService(SKILL_DIR, { async load() { return loaded; } }, 'gpt-5');
+
+    await expect(
+      svc.createSession({ organizationId: 'o', skillPath: SKILL_DIR, systemPrompt: 's' }, []),
+    ).rejects.toThrow(/invalid model deployment/i);
+    expect(attempts).toBe(1); // no retry
+  });
+});

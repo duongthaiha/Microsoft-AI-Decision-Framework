@@ -90,24 +90,65 @@ then a **loud failure** (no silent fallback to scripted output). Cosmos is the s
 source of truth: each call creates a fresh SDK session from reconstructed context, so
 SDK session memory never diverges from the conversation store.
 
+**Cold-start resilience:** the SDK lazily spawns the Copilot CLI subprocess. The first
+session create after a container start (or CLI restart) can race the subprocess becoming
+ready and fail with `Connection is closed`. `RealCopilotSessionService.createSdkSession`
+detects transient CLI errors, resets the client to force a fresh CLI spawn, and retries
+(up to 3 attempts with backoff) so the first real request after a cold start succeeds.
+
+### Azure deployment: Foundry GPT-5 BYOK (validated)
+
+Copilot mode is deployed and **validated live** on Azure using **Bring Your Own Key**
+against Azure AI Foundry — **no GitHub Copilot subscription/token is required**:
+
+- `infra/modules/foundry.bicep` provisions an Azure OpenAI (Foundry) account with a
+  `gpt-5` deployment, public network access disabled, reached over a private endpoint
+  from the VNet-integrated Container App.
+- `RealCopilotSessionService` enters BYOK mode when `AZURE_OPENAI_ENDPOINT` is set. It
+  fetches a fresh AAD bearer token per session via `DefaultAzureCredential`
+  (user-assigned managed identity, `AZURE_CLIENT_ID`), scope
+  `https://cognitiveservices.azure.com/.default`, and passes a provider of
+  `{ type:'openai', baseUrl:'<endpoint>/openai/v1/', bearerToken, wireApi:'responses' }`.
+  The MI holds the **Cognitive Services OpenAI User** role on the account.
+- **Node.js 24 is required** in the container image. The Copilot CLI imports the
+  `node:sqlite` built-in, which only exists (stable, no flag) in Node 22.5+/24. On Node 20
+  the CLI subprocess crashes at startup with
+  `ERR_UNKNOWN_BUILTIN_MODULE: node:sqlite`. The `Dockerfile` uses `node:24-slim`.
+- The CLI binary (`@github/copilot`), `git`, and `ca-certificates` are installed in the
+  runner image; the framework skill is vendored into the image by the azd `prepackage`
+  hook and `ADVISOR_SKILL_PATH` points at it.
+
 ### Mock → Live flip (exact steps)
 
-1. Provision a `GITHUB_TOKEN` (or `COPILOT_TOKEN` / `GH_TOKEN`) secret — prefer Key Vault — for the API container. Supported token types: `gho_`, `ghu_`, `github_pat_`.
-2. Ensure the GitHub Copilot CLI is available to the container runtime (the SDK spawns it) and `@github/copilot-sdk` is installed (already a declared `api` dependency).
-3. Package the skill into the image and point `ADVISOR_SKILL_PATH` at it (default in-repo path is `.agents/skills/microsoft-ai-decision-framework`). Startup fails loudly if `SKILL.md` is missing.
-4. Optionally set `ADVISOR_COPILOT_MODEL` (default `gpt-5.5`) and `ADVISOR_COPILOT_TIMEOUT_MS` (default `120000`).
-5. Set `ADVISOR_AGENT_MODE=copilot` and restart. Startup validation will reject the config early if the token or skill is missing.
+Azure (Foundry BYOK — recommended, no GitHub token):
 
-### Live smoke test (required before trusting copilot mode)
+1. `azd env set ADVISOR_AGENT_MODE copilot` (and optionally `azd env set ADVISOR_COPILOT_MODEL gpt-5`).
+2. `azd provision` — creates the Foundry account, `gpt-5` deployment, private endpoint, and the OpenAI User role assignment for the managed identity.
+3. `azd deploy api` — builds the Node 24 image (CLI + skill vendored via the `prepackage` hook) and rolls a new revision. `ADVISOR_AGENT_MODE` and `AZURE_OPENAI_ENDPOINT` are injected by `containerapp.bicep`.
+
+GitHub-hosted models (alternative — needs a token):
+
+1. Provision a `GITHUB_TOKEN` (or `COPILOT_TOKEN` / `GH_TOKEN`) secret — prefer Key Vault. Supported token types: `gho_`, `ghu_`, `github_pat_`. (Leave `AZURE_OPENAI_ENDPOINT` unset.)
+2. Ensure the Copilot CLI is available (already installed in the image) and `@github/copilot-sdk` is a declared `api` dependency.
+3. Set `ADVISOR_AGENT_MODE=copilot` and restart. Startup validation rejects the config early if neither a token nor a Foundry endpoint is present, or if the skill is missing.
+
+`ADVISOR_COPILOT_MODEL` defaults to `gpt-5`; `ADVISOR_COPILOT_TIMEOUT_MS` defaults to `120000`.
+
+### Live smoke test (validated)
 
 The unit suite verifies the agent contracts against a **fake** SDK client; it does
-**not** call a real model. Before relying on copilot mode, run a live smoke test in an
-environment with a token + Copilot CLI:
+**not** call a real model. The live path has been exercised end-to-end against
+`ADVISOR_AGENT_MODE=copilot` with Foundry GPT-5 BYOK (`agents/advisor/scripts/smoke-copilot.ps1`):
 
-- Drive one full Phase 1→2→3 flow against `ADVISOR_AGENT_MODE=copilot`.
-- Confirm the model invokes `retrieve_framework_guidance` and `lookup_similar_projects` (tool execution requires `skipPermission` — already set on both grounding tools).
-- Confirm a valid `RecommendationOutput` JSON passes shape + domain validation.
-- Confirm pro-code vs low-code scenarios produce materially different recommendations (closes G1).
+- A full Phase 1→2→3 flow produced real, framework-grounded questions and a valid
+  `RecommendationOutput` that passed shape + domain validation.
+- `customInstructionInfluence` cited the org's actual active instruction IDs and
+  `similarProjectHighlights` cited real `lookup_similar_projects` project IDs.
+- The first request after a fresh (cold) revision succeeded via the CLI retry.
+
+> Note: the smoke script must send the request body as a UTF-8 **byte array**; the NFU
+> sample intake contains em-dash characters and a string body can be truncated by a
+> Content-Length mismatch, which `body-parser` rejects as malformed JSON.
 
 ## Auth and authorization are not implemented
 

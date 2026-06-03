@@ -113,7 +113,13 @@ export async function buildDependencies(): Promise<AppDependencies> {
   // -------------------------------------------------------------------------
   let copilotService: ICopilotSessionService;
   if (mode === 'copilot') {
-    log.info({}, 'Using RealCopilotSessionService — requires GITHUB_TOKEN or COPILOT_TOKEN');
+    const byok = Boolean(process.env['AZURE_OPENAI_ENDPOINT']);
+    log.info(
+      { byok },
+      byok
+        ? 'Using RealCopilotSessionService — Azure AI Foundry BYOK (managed-identity bearer token)'
+        : 'Using RealCopilotSessionService — requires GITHUB_TOKEN or COPILOT_TOKEN',
+    );
     copilotService = new RealCopilotSessionService(SKILL_PATH);
   } else {
     log.info({}, 'Using MockCopilotSessionService (deterministic, no LLM)');
