@@ -342,11 +342,19 @@ export class AgentOrchestrator {
       ? Object.values(intake.answers).flat().join(' ').slice(0, 400)
       : `${session.customerOrganizationId} AI assistant`;
 
-    const similarResult = await this.deps.projectSearch.similarProjects({
-      query: searchQuery,
-      indexName: 'advisor-project-knowledge',
-      topK: 3,
-    });
+    // Guard: treat any Search failure as "no similar projects" — avoids crashing
+    // recommendation delivery when the AI Search index is not yet seeded.
+    let similarResult: SimilarProjectResult;
+    try {
+      similarResult = await this.deps.projectSearch.similarProjects({
+        query: searchQuery,
+        indexName: 'advisor-project-knowledge',
+        topK: 3,
+      });
+    } catch (searchErr) {
+      log.warn({ sessionId: session.sessionId, searchError: String(searchErr) }, 'Similar project search failed — treating as no matches');
+      similarResult = { noMatchFound: true, reason: 'Search index unavailable or not yet seeded' };
+    }
 
     const similarHighlights: SimilarProjectHighlight[] = isNoMatchFound(similarResult)
       ? []

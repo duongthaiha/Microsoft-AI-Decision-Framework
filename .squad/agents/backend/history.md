@@ -70,3 +70,51 @@
 - Wave 5: Real Copilot SDK validation (requires GITHUB_TOKEN or COPILOT_TOKEN).
 - Wave 6: Web UI that consumes the HTTP API.
 
+### Wave 4: Live API Demo Script (2026-06-03)
+
+**Context:** Built and validated `agents/advisor/examples/run-advisor-demo.mjs` (Node.js) and `run-advisor-demo.ps1` (PowerShell) as zero-dependency end-to-end demo scripts against the live Azure Container Apps deployment.
+
+**Working intake payload shape (confirmed live):**
+- POST `/sessions` body: `{ customerOrganizationId: "org-nfum", userId: "..." }`
+- POST `/sessions/:id/intake` body: `{ intake: { submittedAt, formTitle, respondent, answers, validationState } }`
+- `answers` is a flat `Record<string, string | string[]>` keyed by question IDs from the form schema
+- Multi-select/multi-text questions use `string[]`; all others use `string`
+
+**Turns to recommendation (live run against org-nfum with `instr-nfum-claims-001`):**
+- **3 user turns** to reach recommendation delivery (total 4 loop iterations)
+- Phase 1: 1 question answered
+- Phase 2: 3 questions pre-answered by custom instructions + 1 POC-scope question answered
+- Phase 3: "proceed" trigger → recommendation delivered inline
+- Custom instruction `instr-nfum-claims-001` eliminated 3 questions entirely
+
+**Recommendation produced (session-282bf386, 2026-06-03T15:35:31Z):**
+- **Primary:** Microsoft Copilot Studio + Azure AI Search + Azure OpenAI/Foundry
+- **Pattern:** Teams-first human-in-the-loop guidance assistant, grounded RAG retrieval
+- **Confidence:** Medium-High
+- **Similar projects matched:** 3 (top score 0.972 — "Rural Claims Advisor Agent — NFU Mutual")
+
+**Cold-start behaviour observed:**
+- `min-replicas=0` → container cold starts in ~5–15s (warmer on subsequent calls within same window)
+- Script uses 6-attempt × 15s health retry loop (90s total budget) — sufficient in all test runs
+- After `azd deploy`, ACA creates new revision but old revision may continue serving for 1–2 minutes
+
+**API bug found and fixed — `buildRecommendationOutput` crash when Search index missing:**
+- Root cause: `similarProjects()` call in `buildRecommendationOutput` was not wrapped in try/catch
+- When AI Search index didn't exist, `RestError` propagated through Phase 3 "proceed" handler AND GET /recommendation, returning 500 INTERNAL_ERROR on both
+- Fix: wrapped `projectSearch.similarProjects()` in try/catch, returning `{ noMatchFound: true, reason: '...' }` on failure
+- File: `api/src/agent/AgentOrchestrator.ts`, method `buildRecommendationOutput`
+- Note: `AzureAiSearchFrameworkRetrieval.retrieve()` already had its own try/catch fallback — no change needed there
+
+**Known pre-existing issue (not fixed here):**
+- `processMessage` returns `readinessState` from `evaluateReadiness()` (computed) rather than from `session.conversationCapture.readinessState` (stored)
+- Result: returned `readinessState` shows `phase1InProgress` even after Phase 3 recommendation delivery
+- GET `/recommendation` works correctly (reads stored state) — demo script recovers by detecting `recommendation` messageType
+- Fix: update `processMessage` to return `session.conversationCapture.readinessState` instead of computed value (Wave 5 cleanup)
+
+**Live demo command:**
+```bash
+node agents/advisor/examples/run-advisor-demo.mjs
+# or on Windows:
+.\agents\advisor\examples\run-advisor-demo.ps1
+```
+
