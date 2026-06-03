@@ -66,3 +66,21 @@ See `.squad/decisions/inbox/tester-eval-and-regression.md` for defects and gaps 
 Apoc: Regression suite now has live endpoint for integration testing. Cold-start only (min-replicas=0); set to 1 for smoother test runs.
 
 **Known gap:** AI Search indexes not seeded yet (Wave 3). GET /similar-projects returns 500 until seed job runs.
+
+---
+
+## Cross-Agent Note — Wave 4 Deliverables (2026-06-03T16:35:54Z)
+
+**From:** Scribe (orchestration summary)
+
+### Impact for Apoc
+
+- **Live Search testing now viable:** GET /similar-projects returns real matches (top: 0.97 for NFU Insurance case)
+- **Demo scripts available:** `agents/advisor/examples/run-advisor-demo.{mjs,ps1}` — full Phase 1→3 flow end-to-end
+  - Params: `ADVISOR_BASE_URL=<live-url>` (defaults to production URL)
+  - Handles streaming message delivery + recommendation detection
+  - All dependencies included (Node 20 global fetch, no external packages)
+- **Known regression:** Search failure now gracefully swallows (buildRecommendationOutput try/catch) — recommendation proceeds without similar-projects enrichment
+- **Pre-existing Wave 5 issue flagged:** processMessage returns computed readinessState instead of stored state; demo works around by detecting `messageType === 'recommendation'`
+
+**Recommendation:** Update regression suite to include live Search tests now that index is seeded. Wave 3/4 closed the `/similar-projects 404` gap.

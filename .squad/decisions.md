@@ -8,160 +8,6 @@
 
 ---
 
-# Decision: Backend Agent Runtime Architecture
-
-**Status:** Implemented (Wave 2 — 2025-05-29)  
-**Context:** AI Framework Advisor Agent POC — Headless agent orchestration runtime  
-**Decider:** Tank (Backend/Agent Engineer)  
-**Stakeholders:** Ha Duong (User/Tech Lead), Echo (Researcher)
-
----
-
-## Problem Statement
-
-The AI Framework Advisor Agent needs a **headless, testable, and deterministic agent orchestration runtime** that:
-1. Implements the three-phase decision methodology (BXT → 9 Questions → Scenario Selection).
-2. Can run in **mock mode** (no Azure, no LLM, no credentials) for local development and CI/CD.
-3. Supports **custom instructions** as a pre-answer gate to eliminate redundant questions.
-4. Provides a **CLI test harness** to prove the Phase 1→2→3 flow before any UI exists.
-5. Allows **adapter swapping** (mock vs. real) via a single environment variable.
-
-**Key constraints:**
-- Must support **strict TypeScript** (`exactOptionalPropertyTypes: true`, `noUncheckedIndexedAccess: true`).
-- Must use **ESM modules** (`"type": "module"`) for `import.meta.url` path resolution.
-- Must work **offline and deterministically** by default (no external API calls in mock mode).
-
----
-
-## Decision
-
-**Chosen architecture:**
-
-### 1. **Composition Root with Mode Switching**
-- **File:** `agents/advisor/api/src/composition.ts`
-- **Mechanism:** `ADVISOR_AGENT_MODE` environment variable controls adapter selection.
-  - `mock` mode (default): In-memory adapters + MockCopilotSessionService (deterministic, no LLM).
-  - `copilot` mode: RealCopilotSessionService (GitHub Copilot SDK) + runtime guards.
-- **Benefit:** Single flag swaps entire adapter layer. No code changes needed.
-
-### 2. **In-Memory Adapters with Seed Data**
-- **Purpose:** Enable complete Phase 1→2→3 testing without any external dependencies.
-- **Implementations:**
-   - `MockCopilotSessionService`: Deterministic responses (no LLM).
-   - `InMemoryConversationStore`: In-memory session storage.
-   - `InMemoryGuidanceStore`: Seeded with NFU custom instructions.
-   - `InMemoryProjectSearch`: 3 seed projects for similar-project lookup.
-   - `InMemoryFrameworkRetrieval`: Reads from skill `references/` or uses embedded fallback.
-- **Benefit:** Instant feedback loop for developers. No Azure credentials needed.
-
-### 3. **Three-Phase Agent Orchestration**
-- **File:** `agents/advisor/api/src/agent/AgentOrchestrator.ts` (542 lines)
-- **Phase 1:** BXT (Business, Desirability, Technology Feasibility) assessment.
-- **Phase 2:** 9 Critical Questions with custom instruction pre-answer gate.
-- **Phase 3:** Scenario-specific selection and recommendation synthesis.
-- **Custom Instruction Pre-Answer Gate:**
-   - Before asking Phase 2/3 questions, agent checks `guidance.instructions`.
-   - If an instruction has `appliesToFrameworkQuestions`, agent pre-answers and records influence.
-   - Skips redundant questions. **Result:** 3 custom instructions eliminated 6 redundant questions in NFU flow.
-- **Benefit:** Reduces conversation length, records decision provenance, respects org-specific policies.
-
-### 4. **CLI Test Harness (Headless-First Validation)**
-- **File:** `agents/advisor/cli/src/index.ts` (206 lines)
-- **Flow:** Intake → Phase 1 BXT → Phase 2 Nine Questions → Phase 3 Recommendation → Similar Projects.
-- **Dynamic imports:** Loads `../../api/dist/composition.js` and `../../api/dist/app.js` at runtime.
-- **Type safety workaround:** Uses `as any` for dynamic imports since TypeScript can't enforce compatibility between `src` and `dist`.
-- **Benefit:** Proves agent loop works before any HTTP API or UI exists. Instant validation.
-
-### 5. **Strict TypeScript Compliance**
-- **Config:** `exactOptionalPropertyTypes: true`, `noUncheckedIndexedAccess: true`
-- **Key learnings:**
-   - Cannot assign `undefined` to optional properties. Must conditionally set: `if (value) obj.optionalProp = value;`
-   - Array/map access returns `T | undefined`. Always guard with `?? null` or nullish checks.
-- **Benefit:** Catches real bugs at compile time.
-
-### 6. **ESM Module Setup**
-- **Config:** `"type": "module"` in all three package.json files (shared, api, cli).
-- **Module resolution:** `"module": "Node16"`, `"moduleResolution": "Node16"`.
-- **Import extensions:** All imports use `.js` (not `.ts`) per Node16 ESM rules.
-- **SKILL_PATH resolution:** Resolves to `../../../../.agents/skills/microsoft-ai-decision-framework` from `api/dist/`.
-- **Benefit:** Enables `import.meta.url` for dynamic path resolution.
-
----
-
-## Alternatives Considered
-
-### ❌ Single TypeScript project (no monorepo)
-- **Rejected:** Would force CLI to bundle all API code. No clean dependency boundaries.
-
-### ❌ HTTP API first, CLI later
-- **Rejected:** Requires spinning up Express server for every test. Slow feedback loop.
-
-### ❌ Real GitHub Copilot SDK from day one
-- **Rejected:** Requires GitHub token. Nondeterministic. Slow. Expensive. Can't run in CI/CD without secrets.
-
-### ❌ Hard-coded dependencies (no DI)
-- **Rejected:** Can't swap mock/real adapters without code changes. No testability.
-
----
-
-## Implementation Artifacts
-
-**Created files (23 total):**
-- **Interfaces (6 files):** `agents/advisor/shared/src/interfaces/` — All service contracts.
-- **Adapters (6 files):** `agents/advisor/api/src/adapters/inmemory/` — All in-memory implementations.
-- **Tools (2 files):** `agents/advisor/api/src/tools/` — Framework retrieval + similar project lookup.
-- **Agent (3 files):** `agents/advisor/api/src/agent/` — Instructions, readiness gates, orchestrator.
-- **Core (3 files):** `agents/advisor/api/src/` — Logger, composition, app.
-- **CLI (1 file):** `agents/advisor/cli/src/index.ts` — Full test harness.
-- **Updated configs:** package.json files (api, cli, shared) — Added dependencies + ESM mode.
-
-**Build output:**
-- ✅ All TypeScript builds successfully.
-- ✅ CLI harness completes Phase 1→2→3 flow.
-- ✅ Recommendation output includes: primary technologies, rationale, custom instruction influence, similar projects, trade-offs.
-
----
-
-## Validation
-
-**Success metrics:**
-- ✅ Build passes with strict TypeScript (`exactOptionalPropertyTypes: true`).
-- ✅ CLI harness exercises complete Phase 1→2→3 flow without external dependencies.
-- ✅ Custom instructions pre-answer 6 questions in NFU flow.
-- ✅ Similar project lookup returns 1 match (Policy Guidance Assistant for Commercial Insurance).
-- ✅ Recommendation output includes all required fields (status, confidence, rationale, trade-offs, sources).
-- ✅ Logger redacts sensitive content (intake answers, user messages).
-- ✅ No Azure credentials or GitHub tokens required in mock mode.
-
----
-
-## Consequences
-
-**Benefits:**
-- ✅ **Instant local development:** No Azure, no credentials, fully deterministic.
-- ✅ **Headless-first validation:** Proves agent loop works before any UI exists.
-- ✅ **Custom instructions reduce redundancy:** 3 instructions eliminated 6 questions.
-- ✅ **Type safety:** Strict TypeScript catches bugs at compile time.
-- ✅ **Clean adapter swapping:** Single environment variable switches mock/real mode.
-
-**Risks:**
-- ⚠️ **Real Copilot SDK not yet validated:** RealCopilotSessionService compiles but untested.
-- ⚠️ **Temporary `_intake` convention:** Session extension used instead of explicit field.
-- ⚠️ **Dynamic import type safety:** CLI uses `as any` to avoid `unknown` errors.
-
-**Next steps:**
-- **Wave 3:** Persistent stores (Cosmos DB, Azure AI Search).
-- **Wave 4:** Express API integration tests (HTTP client).
-- **Wave 5:** Real Copilot SDK validation (requires GitHub token).
-- **Wave 6:** Web UI consuming the HTTP API.
-
----
-
-**Decision Date:** 2025-05-29  
-**Status:** ✅ Implemented and validated via CLI harness  
-**Next Review:** After Wave 3 (persistent stores) implementation
-
----
 
 # ADR: Cosmos DB and Azure AI Search Data Model for `@advisor/data`
 
@@ -806,4 +652,233 @@ Two new methods were added to `IConversationStore`:
 ## Note N1 — `_intake` session pattern is temporary
 
 The orchestrator attaches `_intake` as a non-typed property via `session as AdvisorSession & { _intake?: IntakeSubmission }`. Tests mirror this pattern. Tank's history notes this should become an explicit field in `AdvisorSession` in Wave 3 — when that happens, test helpers (`makeSession`, `makeEvalSession`) should be updated to set the field directly rather than casting.
+
+
+
+
+---
+
+# Decision: Web Frontend Hosting — Azure Storage Static Website
+
+**Date:** 2026-06-03  
+**Author:** Mouse (Frontend / UX)  
+**Status:** Implemented  
+**Stakeholder:** Ha Duong
+
+---
+
+## Problem
+
+Deploy the Advisor React SPA so it is publicly reachable and wired to the live Container App API — with no existing web hosting infrastructure.
+
+## Options Evaluated
+
+| Option | Pros | Cons |
+|--------|------|------|
+| **(a) Azure Static Web Apps** | Native Vite/React fit, free tier, GitHub Actions integration | SWA CLI binary has had ARM issues (noted team learning); adds a new resource type with its own auth rules |
+| **(b) Azure Storage static website** ✅ | Dead-simple, zero proprietary tooling, `az` CLI only, dirt cheap, fully deterministic | No edge CDN by default (can add later), custom domain needs CDN |
+| **(c) Container App (nginx)** | Same infra as API, consistent Bicep model | Overkill for static files; builds docker image; adds ACR push step |
+
+## Decision
+
+**Chosen: Option (b) — Azure Storage static website**
+
+### Why
+
+1. **Simplest possible path.** The entire deploy is two `az` commands: `blob service-properties update` (enable static website) + `blob upload-batch`. No extra CLI tools, no Bicep additions, no image builds.
+2. **Avoids known SWA CLI risk.** Team history notes the SWA CLI `StaticSitesClient` binary had ARM issues. Even if it would work on Windows x86, the Storage path is more reliable and has no moving parts.
+3. **Already in the same RG.** `rg-advisor-advisor-poc` / `swedencentral` — consistent with the rest of the POC infra.
+4. **RBAC-only auth on storage.** Key-based auth is disabled on the subscription; `--auth-mode login` works cleanly.
+5. **SPA routing works.** Setting `404-document = index.html` handles React Router deep-links without a CDN.
+
+### What was NOT chosen and why
+
+- SWA: unnecessary complexity and binary risk for a POC.
+- Container App nginx: image build + ACR push overhead; no benefit for pure static assets.
+
+## Resources Created
+
+| Resource | Name | Region | RG |
+|----------|------|--------|----|
+| Storage Account | `advisorwebpoc` | swedencentral | rg-advisor-advisor-poc |
+
+Static website endpoint: `https://advisorwebpoc.z1.web.core.windows.net/`
+
+## CORS Behaviour
+
+The API Container App uses `app.use(cors())` (no origin filter). Verified via OPTIONS preflight that the API returns:
+
+```
+Access-Control-Allow-Origin: https://advisorwebpoc.z1.web.core.windows.net
+Access-Control-Allow-Methods: GET,POST,PUT,DELETE,OPTIONS
+```
+
+No additional CORS config is required on either the SPA or the API.
+
+## Repeatability
+
+Redeploy script: `agents/advisor/infra/scripts/deploy-web.ps1`  
+Full instructions in: `agents/advisor/web/README.md` (Deploying to Azure section)
+
+## Future Improvements
+
+- Add Azure CDN in front of the storage endpoint for custom domain + HTTPS (custom cert) + edge caching.
+- Consider SWA if GitHub Actions CI/CD integration is needed (preview deployments per PR).
+- Add the storage account to Bicep `main.bicep` + `azure.yaml` if infra-as-code for the web tier is required.
+
+
+---
+
+# Decision: AI Search Seeding Approach — `advisor-project-knowledge`
+
+**Date:** 2026-06-03  
+**Author:** Switch (Data Engineer)  
+**Status:** Implemented and validated
+
+---
+
+## Context
+
+The live POC deployment (RG `rg-advisor-advisor-poc`, swedencentral) had AI Search service `srch-advisor-33wfyfewrvjcg` with no index populated. `GET /sessions/:id/similar-projects` returned a Search 404. Two root causes:
+
+1. **Index name mismatch bug**: `AzureAiSearchProjectSearch.ensureIndex()` used the hardcoded name from the static `PROJECT_KNOWLEDGE_INDEX_DEFINITION` (`project-knowledge`), not the configured `SEARCH_INDEX` env var (`advisor-project-knowledge`). Fixed by passing `{ ...DEFINITION, name: this.options.indexName }` to `createOrUpdateIndex`.
+
+2. **No seeding had been run**: The seed loader existed (`data/src/seed/loader.ts`) but had never been executed against the live environment.
+
+---
+
+## Constraint: Private Endpoints
+
+Azure AI Search confirmed via `az rest` (2023-11-01 API):
+- `publicNetworkAccess: "Disabled"`
+- `disableLocalAuth: true` (RBAC only — managed identity required)
+
+This means dev machines cannot reach the Search or Cosmos endpoints directly. Only the Container App (which is VNet-integrated, acaSubnetId outbound) can reach these services.
+
+> Note: `az search service show` returned null for both fields — it uses an older API version. Always use `az rest` with `api-version=2023-11-01` to inspect AI Search network config accurately.
+
+---
+
+## Options Considered
+
+| Option | Decision |
+|---|---|
+| **(a) Guarded admin endpoint inside running container** | ✅ **Chosen** |
+| (b) Container Apps Job (one-off seed job) | Viable but more setup; container already running |
+| (c) Temporarily enable public access + IP firewall | ❌ Against Azure Policy; risk of forgetting to re-disable |
+
+---
+
+## Chosen Approach: Option (a) — Admin Endpoint Inside Container
+
+### Why
+
+- The container app is already running and VNet-integrated.
+- It uses the managed identity (`e7054a1b-...`) which already has Search Index Data Contributor RBAC.
+- No new infrastructure, no credential exposure, no public access risk.
+- The endpoint re-uses the existing `AzureAiSearchProjectSearch` and `SEED_PROJECT_KNOWLEDGE_DOCUMENTS` — single source of truth for seed data.
+- Idempotent: safe to run multiple times (upsert semantics via Azure AI Search `uploadDocuments`).
+
+### Implementation
+
+Added `POST /admin/seed/project-knowledge` to `@advisor/api/src/app.ts`:
+- Guarded by `process.env['ENABLE_ADMIN_SEED'] === 'true'` — returns 403 otherwise.
+- Dynamically imports `@advisor/data` (same pattern as existing Azure adapter path).
+- Calls `projectSearch.ensureIndex()` (with the name-override fix), then `projectSearch.uploadDocuments()`.
+- Returns `{ ok: true, data: { indexName, documentsSeeded, idempotent: true } }`.
+
+### Workflow for re-seeding
+
+```bash
+# 1. Enable
+az containerapp update --name ca-advisor-33wfyfewrvjcg --resource-group rg-advisor-advisor-poc --set-env-vars ENABLE_ADMIN_SEED=true
+
+# 2. Seed
+curl -X POST https://ca-advisor-33wfyfewrvjcg.redplant-6456c196.swedencentral.azurecontainerapps.io/admin/seed/project-knowledge \
+  -H "Content-Type: application/json" -d '{}'
+
+# 3. Disable (important — do this immediately after seeding)
+az containerapp update --name ca-advisor-33wfyfewrvjcg --resource-group rg-advisor-advisor-poc --remove-env-vars ENABLE_ADMIN_SEED
+```
+
+Or use the PowerShell script: `agents/advisor/data/scripts/seed-via-admin-endpoint.ps1`
+
+---
+
+## State After This Work (2026-06-03)
+
+- ✅ `advisor-project-knowledge` index created and seeded with 6 documents
+- ✅ NFU Mutual guidance (`instr-nfum-claims-001`) seeded into Cosmos `guidance` container for `org-nfum`
+- ✅ `GET /sessions/:id/similar-projects` returns ranked matches (top score 0.97 for insurance intake)
+- ✅ `ENABLE_ADMIN_SEED` removed from container after seeding — endpoint locked down
+- ✅ Fix committed: `ensureIndex()` now uses `this.options.indexName`
+
+---
+
+## Artefacts
+
+- `agents/advisor/data/src/search/AzureAiSearchProjectSearch.ts` — ensureIndex fix
+- `agents/advisor/api/src/app.ts` — admin seed router
+- `agents/advisor/data/scripts/seed-via-admin-endpoint.ps1` — repeatable seed script
+- `agents/advisor/data/docs/seeding.md` — full seeding documentation
+
+
+---
+
+# Decision: Advisor API — Search Failure Swallowed in buildRecommendationOutput
+
+**Date:** 2026-06-03  
+**Author:** Tank (Backend / Agent Engineer)  
+**Status:** Implemented
+
+---
+
+## Context
+
+During live end-to-end demo validation against the deployed Container App, `POST /sessions/:id/messages` and `GET /sessions/:id/recommendation` both returned `500 INTERNAL_ERROR` when the AI Search index (`advisor-project-knowledge`) didn't yet exist.
+
+Root cause: `AgentOrchestrator.buildRecommendationOutput()` called `this.deps.projectSearch.similarProjects()` without a try/catch. An unhandled `RestError` from the Azure Search SDK propagated up through the Phase 3 message handler and the recommendation endpoint, crashing both.
+
+This was masked during local development because `InMemoryProjectSearch` never throws.
+
+---
+
+## Decision
+
+Wrap the `projectSearch.similarProjects()` call in `buildRecommendationOutput` in a try/catch. On any error, return `{ noMatchFound: true, reason: 'Search index unavailable or not yet seeded' }` and log a warning. The recommendation proceeds without similar-project highlights rather than crashing.
+
+This aligns with the existing pattern in `AzureAiSearchFrameworkRetrieval.retrieve()`, which already swallows Search failures and falls back to local content.
+
+---
+
+## Rationale
+
+- **Recommendation delivery must not be gated on Search availability.** The core value — technology selection guidance — comes from the framework logic and intake analysis, not from prior project matches.
+- **Similar project highlights are enrichment, not requirement.** The `RecommendationOutput.similarProjectHighlights` field is already optional.
+- **Defensive posture for the POC phase.** The Search index seed is a separate operation that Switch owns. A deployment window where the index doesn't exist (or is being rebuilt) should not break the advisor flow.
+
+---
+
+## Files Changed
+
+- `agents/advisor/api/src/agent/AgentOrchestrator.ts` — `buildRecommendationOutput()` method
+- `agents/advisor/api/dist/agent/AgentOrchestrator.js` — compiled output (auto-generated)
+
+---
+
+## Related Known Issue (NOT fixed here)
+
+`processMessage` returns `readinessState` from `evaluateReadiness()` (a computed function) rather than from `session.conversationCapture.readinessState` (the stored value). This causes the returned `readinessState` to show `phase1InProgress` even after Phase 3 recommendation delivery.
+
+The GET `/recommendation` endpoint works correctly because it reads the stored state. Demo scripts can detect recommendation delivery via `agentTurn.messageType === 'recommendation'`.
+
+**Proposed fix (Wave 5):** Update `processMessage` return value to use `finalSession.conversationCapture.readinessState` directly.
+
+
+---
+
+### 2026-06-03T16:19:19+01:00: User directive — AI Search public access authorized for seeding
+**By:** Ha Duong (via Copilot)
+**What:** Switch is authorized to TEMPORARILY enable public network access on AI Search (srch-advisor-33wfyfewrvjcg) in order to seed the `advisor-project-knowledge` index from a dev box, if an in-network path proves impractical. Must RE-DISABLE / restore the locked-down (private-endpoint-only) state immediately after seeding completes.
+**Why:** User request — unblocks the search index seeding work. Authorization is scoped to the seeding task only; public access must not be left enabled.
 
