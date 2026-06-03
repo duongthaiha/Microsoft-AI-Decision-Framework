@@ -11,8 +11,9 @@ import { InMemoryProjectSearch } from '../adapters/inmemory/InMemoryProjectSearc
 import { InMemoryFrameworkRetrieval } from '../adapters/inmemory/InMemoryFrameworkRetrieval.js';
 import { MockCopilotSessionService } from '../adapters/inmemory/MockCopilotSessionService.js';
 import { AgentOrchestrator } from '../agent/AgentOrchestrator.js';
+import { DeterministicAdvisorAgent } from '../agent/DeterministicAdvisorAgent.js';
 
-/** Build a full set of in-memory dependencies with the mock agent. */
+/** Build a full set of in-memory dependencies with the deterministic agent. */
 export function buildTestDeps() {
   const conversationStore = new InMemoryConversationStore();
   const guidanceStore = new InMemoryGuidanceStore();
@@ -20,17 +21,16 @@ export function buildTestDeps() {
   // Empty skillPath triggers embedded THREE_PHASE_SUMMARY fallback — no file I/O in tests
   const frameworkRetrieval = new InMemoryFrameworkRetrieval('');
   const copilotService = new MockCopilotSessionService(conversationStore, guidanceStore);
+  const advisorAgent = new DeterministicAdvisorAgent({ projectSearch, frameworkRetrieval });
 
   const orchestrator = new AgentOrchestrator({
     conversationStore,
     guidanceStore,
     projectSearch,
-    frameworkRetrieval,
-    copilotService,
-    skillPath: '',
+    advisorAgent,
   });
 
-  return { conversationStore, guidanceStore, projectSearch, frameworkRetrieval, copilotService, orchestrator };
+  return { conversationStore, guidanceStore, projectSearch, frameworkRetrieval, copilotService, advisorAgent, orchestrator };
 }
 
 /** Create a bare AdvisorSession (no intake, no turns). */

@@ -20,6 +20,15 @@
     "apiContainerImage": {
       "value": "${API_CONTAINER_IMAGE=mcr.microsoft.com/azuredocs/containerapps-helloworld:latest}"
     },
+    "foundryModelName": {
+      "value": "${ADVISOR_COPILOT_MODEL=gpt-5}"
+    },
+    "foundryModelVersion": {
+      "value": "${FOUNDRY_MODEL_VERSION=2025-08-07}"
+    },
+    "foundryModelCapacity": {
+      "value": "${FOUNDRY_MODEL_CAPACITY=50}"
+    },
     "containerAppMinReplicas": {
       "value": "${CONTAINER_APP_MIN_REPLICAS=0}"
     },

@@ -43,6 +43,18 @@ FROM node:20-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 
+# System deps for the GitHub Copilot CLI (copilot mode / BYOK):
+#   - git: the CLI expects git to be available on PATH
+#   - ca-certificates: TLS to Azure AI Foundry
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends git ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
+
+# Install the GitHub Copilot CLI globally. The @github/copilot-sdk spawns the
+# `copilot` binary as its agent runtime. In BYOK mode (AZURE_OPENAI_ENDPOINT set)
+# it runs against Azure AI Foundry and needs no Copilot subscription.
+RUN npm install -g @github/copilot@1.0.59
+
 # Copy workspace manifests
 COPY package.json package-lock.json tsconfig.base.json ./
 COPY shared/package.json ./shared/
@@ -57,6 +69,12 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/shared/dist ./shared/dist
 COPY --from=builder /app/data/dist ./data/dist
 COPY --from=builder /app/api/dist ./api/dist
+
+# The microsoft-ai-decision-framework skill is vendored into the build context
+# by the azd `prepackage` hook (see azure.yaml). The CopilotAdvisorAgent loads
+# it via skillDirectories. ADVISOR_SKILL_PATH points at the in-image location.
+COPY skill/ ./skill/
+ENV ADVISOR_SKILL_PATH=/app/skill/microsoft-ai-decision-framework
 
 EXPOSE 3000
 

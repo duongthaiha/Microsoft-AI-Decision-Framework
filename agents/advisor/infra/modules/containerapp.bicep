@@ -28,6 +28,10 @@ param cosmosEndpoint string
 param cosmosDatabaseName string
 param searchEndpoint string
 param searchIndexName string
+@description('Azure OpenAI (Foundry) endpoint for BYOK copilot mode.')
+param azureOpenAiEndpoint string = ''
+@description('Azure OpenAI deployment name used as the model id in copilot mode.')
+param copilotModel string = ''
 
 @minValue(0)
 param minReplicas int = 0
@@ -134,6 +138,15 @@ resource containerApp 'Microsoft.App/containerApps@2023-05-01' = {
             {
               name: 'SEARCH_INDEX'
               value: searchIndexName
+            }
+            // Azure AI Foundry (Azure OpenAI) — LLM for copilot mode (BYOK via managed identity)
+            {
+              name: 'AZURE_OPENAI_ENDPOINT'
+              value: azureOpenAiEndpoint
+            }
+            {
+              name: 'ADVISOR_COPILOT_MODEL'
+              value: copilotModel
             }
             // Application Insights
             {

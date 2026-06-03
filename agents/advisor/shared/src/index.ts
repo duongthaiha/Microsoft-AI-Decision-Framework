@@ -143,3 +143,13 @@ export type { IConversationStore } from './interfaces/index.js';
 export type { IGuidanceStore } from './interfaces/index.js';
 export type { IProjectSearchService } from './interfaces/index.js';
 export type { IFrameworkRetrievalService, FrameworkRetrievalQuery, FrameworkRetrievalResult } from './interfaces/index.js';
+export type { IAdvisorAgent, AdvisorContext, AdvisorStage, QuestionEnvelope } from './interfaces/index.js';
+
+// Recommendation validator + defensive LLM-output parser
+export {
+  RecommendationOutputSchema,
+  extractJsonObject,
+  extractAndParseRecommendation,
+} from './types/validators.recommendation.js';
+
+export type { RecommendationParseResult } from './types/validators.recommendation.js';

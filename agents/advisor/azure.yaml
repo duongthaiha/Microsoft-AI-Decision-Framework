@@ -37,3 +37,45 @@ services:
       context: ..
       # Docker daemon not available in this environment — use ACR Tasks for remote build
       remoteBuild: true
+    hooks:
+      # Vendor the microsoft-ai-decision-framework skill into the build context
+      # (agents/advisor/skill/) so the Dockerfile can COPY it into the image.
+      # The skill lives at repo-root/.agents/skills/ which is outside the Docker
+      # build context, so it must be copied in before packaging.
+      prepackage:
+        posix:
+          shell: sh
+          run: |
+            set -e
+            d="$(pwd)"
+            while [ -n "$d" ] && [ "$d" != "/" ] && [ ! -d "$d/.agents/skills/microsoft-ai-decision-framework" ]; do
+              d="$(dirname "$d")"
+            done
+            if [ ! -d "$d/.agents/skills/microsoft-ai-decision-framework" ]; then
+              echo "ERROR: could not locate .agents/skills/microsoft-ai-decision-framework" >&2
+              exit 1
+            fi
+            dst="$d/agents/advisor/skill/microsoft-ai-decision-framework"
+            rm -rf "$dst"
+            mkdir -p "$dst"
+            cp -R "$d/.agents/skills/microsoft-ai-decision-framework/." "$dst/"
+            echo "Vendored skill -> $dst"
+        windows:
+          shell: pwsh
+          run: |
+            $ErrorActionPreference = 'Stop'
+            $d = (Get-Location).Path
+            while ($d -and -not (Test-Path (Join-Path $d '.agents/skills/microsoft-ai-decision-framework'))) {
+              $parent = Split-Path $d -Parent
+              if ($parent -eq $d) { break }
+              $d = $parent
+            }
+            if (-not (Test-Path (Join-Path $d '.agents/skills/microsoft-ai-decision-framework'))) {
+              throw 'Could not locate .agents/skills/microsoft-ai-decision-framework'
+            }
+            $src = Join-Path $d '.agents/skills/microsoft-ai-decision-framework'
+            $dst = Join-Path $d 'agents/advisor/skill/microsoft-ai-decision-framework'
+            if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+            New-Item -ItemType Directory -Force -Path $dst | Out-Null
+            Copy-Item -Recurse -Force "$src/*" $dst
+            Write-Host "Vendored skill -> $dst"

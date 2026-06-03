@@ -22,6 +22,9 @@ param searchServiceId string
 param searchServiceName string
 param keyVaultName string
 param acrId string
+@description('Name of the Azure OpenAI (Foundry) account — used to scope OpenAI RBAC.')
+param foundryAccountName string
+param foundryAccountId string
 
 // Existing Key Vault reference for scoping
 resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
@@ -31,6 +34,11 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
 // Existing AI Search reference — scopes role assignments to this resource, not the RG
 resource searchService 'Microsoft.Search/searchServices@2023-11-01' existing = {
   name: searchServiceName
+}
+
+// Existing Azure OpenAI (Foundry) reference — scopes OpenAI RBAC to this resource
+resource foundryAccount 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
+  name: foundryAccountName
 }
 
 // --- Azure AI Search ---
@@ -78,7 +86,6 @@ resource keyVaultSecretsUser 'Microsoft.Authorization/roleAssignments@2022-04-01
 // --- Container Registry ---
 
 var acrPullRoleId = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
-
 resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(acrId, managedIdentityPrincipalId, acrPullRoleId)
   scope: resourceGroup()
@@ -87,6 +94,23 @@ resource acrPull 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     principalId: managedIdentityPrincipalId
     principalType: 'ServicePrincipal'
     description: 'Allows the advisor API managed identity to pull container images from ACR.'
+  }
+}
+
+// --- Azure OpenAI (Foundry) ---
+
+// Cognitive Services OpenAI User — allows data-plane inference calls (chat/responses)
+// against model deployments using AAD tokens. No key access.
+var cognitiveServicesOpenAIUserRoleId = '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd'
+
+resource foundryOpenAIUser 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(foundryAccountId, managedIdentityPrincipalId, cognitiveServicesOpenAIUserRoleId)
+  scope: foundryAccount
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', cognitiveServicesOpenAIUserRoleId)
+    principalId: managedIdentityPrincipalId
+    principalType: 'ServicePrincipal'
+    description: 'Allows the advisor API managed identity to call Azure OpenAI model deployments (BYOK for copilot mode).'
   }
 }
 

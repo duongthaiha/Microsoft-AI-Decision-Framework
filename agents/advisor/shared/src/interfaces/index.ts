@@ -3,3 +3,4 @@ export type { IConversationStore } from './IConversationStore.js';
 export type { IGuidanceStore } from './IGuidanceStore.js';
 export type { IProjectSearchService } from './IProjectSearchService.js';
 export type { IFrameworkRetrievalService, FrameworkRetrievalQuery, FrameworkRetrievalResult } from './IFrameworkRetrievalService.js';
+export type { IAdvisorAgent, AdvisorContext, AdvisorStage, QuestionEnvelope } from './IAdvisorAgent.js';

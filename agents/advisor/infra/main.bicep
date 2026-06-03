@@ -35,6 +35,16 @@ param searchIndexName string = 'advisor-project-knowledge'
 @description('Container image to deploy on first provision. azd replaces this on deploy.')
 param apiContainerImage string = 'mcr.microsoft.com/azuredocs/containerapps-helloworld:latest'
 
+@description('Azure OpenAI (Foundry) model + deployment name for copilot mode.')
+param foundryModelName string = 'gpt-5'
+
+@description('Azure OpenAI model version.')
+param foundryModelVersion string = '2025-08-07'
+
+@description('Provisioned throughput (k tokens/min) for the Foundry deployment.')
+@minValue(1)
+param foundryModelCapacity int = 50
+
 @description('Minimum replica count for the Container App (0 = scale to zero).')
 @minValue(0)
 @maxValue(3)
@@ -62,6 +72,7 @@ var abbr = {
   containerAppsEnv: 'cae-'
   containerApp: 'ca-'
   virtualNetwork: 'vnet-'
+  foundry: 'aoai-'
 }
 
 var resourceGroupName = '${abbr.resourceGroup}advisor-${environmentName}'
@@ -179,6 +190,27 @@ module search 'modules/search.bicep' = {
 }
 
 // ------------------------------------
+// Azure AI Foundry (Azure OpenAI) — LLM for copilot mode
+// ------------------------------------
+
+module foundry 'modules/foundry.bicep' = {
+  name: 'foundry'
+  scope: rg
+  params: {
+    accountName: '${abbr.foundry}advisor-${resourceToken}'
+    location: location
+    tags: tags
+    vnetId: network.outputs.vnetId
+    privateEndpointSubnetId: network.outputs.privateEndpointSubnetId
+    logAnalyticsWorkspaceId: monitoring.outputs.logAnalyticsWorkspaceId
+    modelName: foundryModelName
+    modelVersion: foundryModelVersion
+    deploymentName: foundryModelName
+    modelCapacity: foundryModelCapacity
+  }
+}
+
+// ------------------------------------
 // Azure Container Registry
 // ------------------------------------
 
@@ -217,6 +249,8 @@ module containerapp 'modules/containerapp.bicep' = {
     cosmosDatabaseName: cosmosDatabaseName
     searchEndpoint: search.outputs.endpoint
     searchIndexName: searchIndexName
+    azureOpenAiEndpoint: foundry.outputs.endpoint
+    copilotModel: foundry.outputs.deploymentName
     minReplicas: containerAppMinReplicas
     maxReplicas: containerAppMaxReplicas
   }
@@ -235,6 +269,8 @@ module roleAssignments 'modules/roleassignments.bicep' = {
     searchServiceName: search.outputs.name
     keyVaultName: keyvault.outputs.name
     acrId: acr.outputs.id
+    foundryAccountName: foundry.outputs.name
+    foundryAccountId: foundry.outputs.id
   }
 }
 
@@ -256,5 +292,7 @@ output AZURE_MANAGED_IDENTITY_ID string = identity.outputs.id
 
 output COSMOS_ENDPOINT string = cosmosdb.outputs.endpoint
 output SEARCH_ENDPOINT string = search.outputs.endpoint
+output AZURE_OPENAI_ENDPOINT string = foundry.outputs.endpoint
+output ADVISOR_COPILOT_MODEL string = foundry.outputs.deploymentName
 output KEY_VAULT_ENDPOINT string = keyvault.outputs.vaultUri
 output APPINSIGHTS_CONNECTION_STRING string = monitoring.outputs.appInsightsConnectionString

@@ -11,6 +11,7 @@ import { InMemoryProjectSearch } from '../api/src/adapters/inmemory/InMemoryProj
 import { InMemoryFrameworkRetrieval } from '../api/src/adapters/inmemory/InMemoryFrameworkRetrieval.js';
 import { MockCopilotSessionService } from '../api/src/adapters/inmemory/MockCopilotSessionService.js';
 import { AgentOrchestrator } from '../api/src/agent/AgentOrchestrator.js';
+import { DeterministicAdvisorAgent } from '../api/src/agent/DeterministicAdvisorAgent.js';
 import type { IProjectSearchService } from '@advisor/shared';
 
 /** A project search implementation that always returns noMatchFound. */
@@ -26,17 +27,16 @@ export function buildEvalDeps(opts: { projectSearch?: IProjectSearchService } = 
   const projectSearch = opts.projectSearch ?? new InMemoryProjectSearch();
   const frameworkRetrieval = new InMemoryFrameworkRetrieval('');
   const copilotService = new MockCopilotSessionService(conversationStore, guidanceStore);
+  const advisorAgent = new DeterministicAdvisorAgent({ projectSearch, frameworkRetrieval });
 
   const orchestrator = new AgentOrchestrator({
     conversationStore,
     guidanceStore,
     projectSearch,
-    frameworkRetrieval,
-    copilotService,
-    skillPath: '',
+    advisorAgent,
   });
 
-  return { conversationStore, guidanceStore, projectSearch, frameworkRetrieval, copilotService, orchestrator };
+  return { conversationStore, guidanceStore, projectSearch, frameworkRetrieval, copilotService, advisorAgent, orchestrator };
 }
 
 export function makeEvalSession(orgId: string): AdvisorSession {

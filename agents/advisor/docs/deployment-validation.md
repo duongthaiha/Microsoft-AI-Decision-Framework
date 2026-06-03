@@ -121,4 +121,79 @@ Before marking a deployment as successful, confirm:
 
 ---
 
-*Last updated: 2026-05-29 by Apoc (QA)*
+---
+
+## Wave 3 Actual Validation Results (2026-05-29)
+
+**Validated by:** Dozer  
+**Environment:** advisor-poc, swedencentral  
+**Container App:** ca-advisor-33wfyfewrvjcg  
+**FQDN:** `https://ca-advisor-33wfyfewrvjcg.redplant-6456c196.swedencentral.azurecontainerapps.io`
+
+### Section 1 — API Health
+
+| Check | Result |
+|---|---|
+| `GET /health` | ✅ HTTP 200 — `{"ok":true,"service":"@advisor/api","ts":"..."}` in 1.86s |
+| CORS header | ✅ `Access-Control-Allow-Origin: *` present |
+| Cold-start note | Container runs min-replicas=0 — first request after idle takes ~30-60s |
+
+### Section 2 — Cosmos DB Reachability (from container, over private endpoint)
+
+| Check | Result |
+|---|---|
+| `provisioningState` | ✅ Succeeded |
+| `publicNetworkAccess` | ✅ Disabled |
+| `sessions` container | ✅ Exists, TTL=-1 |
+| `guidance` container | ✅ Exists |
+| `POST /sessions` | ✅ HTTP 201 — session created, Cosmos write confirmed |
+| `POST /sessions/:id/intake` | ✅ HTTP 200 — intake processed, Cosmos read+write confirmed |
+| **Private endpoint reachability** | ✅ PROVEN — live traffic flowing through PE |
+
+### Section 3 — AI Search Reachability (from container, over private endpoint)
+
+| Check | Result |
+|---|---|
+| `provisioningState` | ✅ succeeded |
+| `status` | ✅ running |
+| `publicNetworkAccess` | ✅ Disabled |
+| **Private endpoint reachability** | ✅ PROVEN — container received `RestError: index not found` (application-level 404 from Search API; proves PE path is open) |
+| Index `advisor-project-knowledge` | ❌ Not seeded — `GET /sessions/:id/similar-projects` → 500 `SEARCH_FAILURE` |
+| Index `framework-content` | ❌ Not seeded |
+
+**Action required:** Run the data seed job (`npm run seed` in agents/advisor) to create and populate both indexes.
+
+### Section 4 — Application Insights
+
+| Check | Result |
+|---|---|
+| App Insights resource | ✅ provisioningState=Succeeded |
+| `APPLICATIONINSIGHTS_CONNECTION_STRING` in env | ✅ Present |
+| Log Analytics receiving telemetry | ✅ Container logs visible in Log Analytics workspace |
+
+### Section 5 — End-to-End Smoke Test
+
+| Check | Result |
+|---|---|
+| Create session | ✅ HTTP 201 |
+| Submit intake | ✅ HTTP 200 — Phase 1 BXT question returned (MockCopilotSession) |
+| Similar projects | ❌ Blocked — Search indexes not seeded |
+
+### Adapter Mode Summary
+
+- **Data adapters (Cosmos + Search):** REAL Azure adapters active (both endpoints injected by Bicep)
+- **LLM service:** MockCopilotSessionService (deterministic; `ADVISOR_AGENT_MODE=mock`)
+- To enable real LLM: set `ADVISOR_AGENT_MODE=copilot` + inject `GITHUB_TOKEN`
+
+### Sign-off
+
+- [x] API health endpoint returns HTTP 200
+- [ ] Web UI loads without JavaScript errors — *not deployed (web service deferred)*
+- [x] Cosmos DB containers exist (`sessions`, `guidance`)
+- [ ] AI Search index exists — **BLOCKED: not seeded**
+- [x] App Insights / Log Analytics telemetry flowing
+- [ ] NFU Mutual regression script — deferred (Search not seeded)
+- [ ] Error rate check — insufficient traffic to measure
+- [x] Open blockers logged — see `.squad/decisions/inbox/dozer-deploy.md`
+
+*Last updated: 2026-05-29T18:44:22+01:00 by Dozer (post-deployment validation)*

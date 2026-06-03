@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.42.1.51946",
-      "templateHash": "10126663280536229108"
+      "templateHash": "13202777598296126127"
     }
   },
   "parameters": {
@@ -56,6 +56,28 @@
         "description": "Container image to deploy on first provision. azd replaces this on deploy."
       }
     },
+    "foundryModelName": {
+      "type": "string",
+      "defaultValue": "gpt-5",
+      "metadata": {
+        "description": "Azure OpenAI (Foundry) model + deployment name for copilot mode."
+      }
+    },
+    "foundryModelVersion": {
+      "type": "string",
+      "defaultValue": "2025-08-07",
+      "metadata": {
+        "description": "Azure OpenAI model version."
+      }
+    },
+    "foundryModelCapacity": {
+      "type": "int",
+      "defaultValue": 50,
+      "minValue": 1,
+      "metadata": {
+        "description": "Provisioned throughput (k tokens/min) for the Foundry deployment."
+      }
+    },
     "containerAppMinReplicas": {
       "type": "int",
       "defaultValue": 0,
@@ -88,7 +110,8 @@
       "acr": "acr",
       "containerAppsEnv": "cae-",
       "containerApp": "ca-",
-      "virtualNetwork": "vnet-"
+      "virtualNetwork": "vnet-",
+      "foundry": "aoai-"
     },
     "resourceGroupName": "[format('{0}advisor-{1}', variables('abbr').resourceGroup, parameters('environmentName'))]",
     "tags": {
@@ -1148,6 +1171,275 @@
     {
       "type": "Microsoft.Resources/deployments",
       "apiVersion": "2025-04-01",
+      "name": "foundry",
+      "resourceGroup": "[variables('resourceGroupName')]",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "accountName": {
+            "value": "[format('{0}advisor-{1}', variables('abbr').foundry, variables('resourceToken'))]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "tags": {
+            "value": "[variables('tags')]"
+          },
+          "vnetId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'network'), '2025-04-01').outputs.vnetId.value]"
+          },
+          "privateEndpointSubnetId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'network'), '2025-04-01').outputs.privateEndpointSubnetId.value]"
+          },
+          "logAnalyticsWorkspaceId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'monitoring'), '2025-04-01').outputs.logAnalyticsWorkspaceId.value]"
+          },
+          "modelName": {
+            "value": "[parameters('foundryModelName')]"
+          },
+          "modelVersion": {
+            "value": "[parameters('foundryModelVersion')]"
+          },
+          "deploymentName": {
+            "value": "[parameters('foundryModelName')]"
+          },
+          "modelCapacity": {
+            "value": "[parameters('foundryModelCapacity')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.42.1.51946",
+              "templateHash": "12776018043773861857"
+            }
+          },
+          "parameters": {
+            "accountName": {
+              "type": "string"
+            },
+            "location": {
+              "type": "string"
+            },
+            "tags": {
+              "type": "object"
+            },
+            "vnetId": {
+              "type": "string"
+            },
+            "privateEndpointSubnetId": {
+              "type": "string"
+            },
+            "logAnalyticsWorkspaceId": {
+              "type": "string"
+            },
+            "modelName": {
+              "type": "string",
+              "defaultValue": "gpt-5",
+              "metadata": {
+                "description": "Azure OpenAI model to deploy (must be available in the region)."
+              }
+            },
+            "modelVersion": {
+              "type": "string",
+              "defaultValue": "2025-08-07",
+              "metadata": {
+                "description": "Model version for the deployment."
+              }
+            },
+            "deploymentName": {
+              "type": "string",
+              "defaultValue": "gpt-5",
+              "metadata": {
+                "description": "Deployment name — used as the model id by the Copilot SDK provider."
+              }
+            },
+            "modelCapacity": {
+              "type": "int",
+              "defaultValue": 50,
+              "minValue": 1,
+              "metadata": {
+                "description": "Provisioned throughput (thousands of tokens/min) for the deployment."
+              }
+            }
+          },
+          "variables": {
+            "privateDnsZoneName": "privatelink.openai.azure.com",
+            "privateEndpointName": "[format('pe-{0}', parameters('accountName'))]"
+          },
+          "resources": [
+            {
+              "type": "Microsoft.CognitiveServices/accounts",
+              "apiVersion": "2024-10-01",
+              "name": "[parameters('accountName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "kind": "OpenAI",
+              "sku": {
+                "name": "S0"
+              },
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "customSubDomainName": "[parameters('accountName')]",
+                "publicNetworkAccess": "Disabled",
+                "disableLocalAuth": true,
+                "networkAcls": {
+                  "defaultAction": "Deny",
+                  "ipRules": [],
+                  "virtualNetworkRules": []
+                }
+              }
+            },
+            {
+              "type": "Microsoft.CognitiveServices/accounts/deployments",
+              "apiVersion": "2024-10-01",
+              "name": "[format('{0}/{1}', parameters('accountName'), parameters('deploymentName'))]",
+              "sku": {
+                "name": "GlobalStandard",
+                "capacity": "[parameters('modelCapacity')]"
+              },
+              "properties": {
+                "model": {
+                  "format": "OpenAI",
+                  "name": "[parameters('modelName')]",
+                  "version": "[parameters('modelVersion')]"
+                },
+                "versionUpgradeOption": "OnceNewDefaultVersionAvailable",
+                "raiPolicyName": "Microsoft.DefaultV2"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Insights/diagnosticSettings",
+              "apiVersion": "2021-05-01-preview",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+              "name": "foundry-diagnostics",
+              "properties": {
+                "workspaceId": "[parameters('logAnalyticsWorkspaceId')]",
+                "logs": [
+                  {
+                    "categoryGroup": "allLogs",
+                    "enabled": true
+                  }
+                ],
+                "metrics": [
+                  {
+                    "category": "AllMetrics",
+                    "enabled": true
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateDnsZones",
+              "apiVersion": "2020-06-01",
+              "name": "[variables('privateDnsZoneName')]",
+              "location": "global",
+              "tags": "[parameters('tags')]"
+            },
+            {
+              "type": "Microsoft.Network/privateDnsZones/virtualNetworkLinks",
+              "apiVersion": "2020-06-01",
+              "name": "[format('{0}/{1}', variables('privateDnsZoneName'), 'link-foundry-vnet')]",
+              "location": "global",
+              "properties": {
+                "virtualNetwork": {
+                  "id": "[parameters('vnetId')]"
+                },
+                "registrationEnabled": false
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints",
+              "apiVersion": "2023-04-01",
+              "name": "[variables('privateEndpointName')]",
+              "location": "[parameters('location')]",
+              "tags": "[parameters('tags')]",
+              "properties": {
+                "subnet": {
+                  "id": "[parameters('privateEndpointSubnetId')]"
+                },
+                "privateLinkServiceConnections": [
+                  {
+                    "name": "[format('{0}-conn', variables('privateEndpointName'))]",
+                    "properties": {
+                      "privateLinkServiceId": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+                      "groupIds": [
+                        "account"
+                      ]
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+              ]
+            },
+            {
+              "type": "Microsoft.Network/privateEndpoints/privateDnsZoneGroups",
+              "apiVersion": "2023-04-01",
+              "name": "[format('{0}/{1}', variables('privateEndpointName'), 'foundry-dns-zone-group')]",
+              "properties": {
+                "privateDnsZoneConfigs": [
+                  {
+                    "name": "config-foundry",
+                    "properties": {
+                      "privateDnsZoneId": "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneName'))]"
+                    }
+                  }
+                ]
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Network/privateDnsZones', variables('privateDnsZoneName'))]",
+                "[resourceId('Microsoft.Network/privateEndpoints', variables('privateEndpointName'))]"
+              ]
+            }
+          ],
+          "outputs": {
+            "id": {
+              "type": "string",
+              "value": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+            },
+            "name": {
+              "type": "string",
+              "value": "[parameters('accountName')]"
+            },
+            "endpoint": {
+              "type": "string",
+              "value": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), '2024-10-01').endpoint]"
+            },
+            "deploymentName": {
+              "type": "string",
+              "value": "[parameters('deploymentName')]"
+            }
+          }
+        }
+      },
+      "dependsOn": [
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'monitoring')]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'network')]",
+        "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('resourceGroupName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
       "name": "acr",
       "resourceGroup": "[variables('resourceGroupName')]",
       "properties": {
@@ -1314,6 +1606,12 @@
           "searchIndexName": {
             "value": "[parameters('searchIndexName')]"
           },
+          "azureOpenAiEndpoint": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'foundry'), '2025-04-01').outputs.endpoint.value]"
+          },
+          "copilotModel": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'foundry'), '2025-04-01').outputs.deploymentName.value]"
+          },
           "minReplicas": {
             "value": "[parameters('containerAppMinReplicas')]"
           },
@@ -1328,7 +1626,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.42.1.51946",
-              "templateHash": "7543162132640129982"
+              "templateHash": "7727483185353923353"
             }
           },
           "parameters": {
@@ -1379,6 +1677,20 @@
             },
             "searchIndexName": {
               "type": "string"
+            },
+            "azureOpenAiEndpoint": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Azure OpenAI (Foundry) endpoint for BYOK copilot mode."
+              }
+            },
+            "copilotModel": {
+              "type": "string",
+              "defaultValue": "",
+              "metadata": {
+                "description": "Azure OpenAI deployment name used as the model id in copilot mode."
+              }
             },
             "minReplicas": {
               "type": "int",
@@ -1498,6 +1810,14 @@
                           "value": "[parameters('searchIndexName')]"
                         },
                         {
+                          "name": "AZURE_OPENAI_ENDPOINT",
+                          "value": "[parameters('azureOpenAiEndpoint')]"
+                        },
+                        {
+                          "name": "ADVISOR_COPILOT_MODEL",
+                          "value": "[parameters('copilotModel')]"
+                        },
+                        {
                           "name": "APPLICATIONINSIGHTS_CONNECTION_STRING",
                           "value": "[parameters('appInsightsConnectionString')]"
                         }
@@ -1574,6 +1894,7 @@
       "dependsOn": [
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'acr')]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'cosmosdb')]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'foundry')]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'identity')]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'monitoring')]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'network')]",
@@ -1606,6 +1927,12 @@
           },
           "acrId": {
             "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'acr'), '2025-04-01').outputs.id.value]"
+          },
+          "foundryAccountName": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'foundry'), '2025-04-01').outputs.name.value]"
+          },
+          "foundryAccountId": {
+            "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'foundry'), '2025-04-01').outputs.id.value]"
           }
         },
         "template": {
@@ -1615,7 +1942,7 @@
             "_generator": {
               "name": "bicep",
               "version": "0.42.1.51946",
-              "templateHash": "7907801129096516548"
+              "templateHash": "14377533682095396731"
             }
           },
           "parameters": {
@@ -1636,6 +1963,15 @@
             },
             "acrId": {
               "type": "string"
+            },
+            "foundryAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Name of the Azure OpenAI (Foundry) account — used to scope OpenAI RBAC."
+              }
+            },
+            "foundryAccountId": {
+              "type": "string"
             }
           },
           "variables": {
@@ -1643,6 +1979,7 @@
             "searchServiceContributorRoleId": "7ca78c08-252a-4471-8644-bb5ff32d4ba0",
             "keyVaultSecretsUserRoleId": "4633458b-17de-408a-b874-0445c86b69e6",
             "acrPullRoleId": "7f951dda-4ed3-4680-a7ca-43fe172d538d",
+            "cognitiveServicesOpenAIUserRoleId": "5e0bd9bd-7b93-4f28-af87-19fc36ad61bd",
             "monitoringMetricsPublisherRoleId": "3913510d-42f4-4e42-8a64-420c390055eb"
           },
           "resources": [
@@ -1696,6 +2033,18 @@
             {
               "type": "Microsoft.Authorization/roleAssignments",
               "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('foundryAccountName'))]",
+              "name": "[guid(parameters('foundryAccountId'), parameters('managedIdentityPrincipalId'), variables('cognitiveServicesOpenAIUserRoleId'))]",
+              "properties": {
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('cognitiveServicesOpenAIUserRoleId'))]",
+                "principalId": "[parameters('managedIdentityPrincipalId')]",
+                "principalType": "ServicePrincipal",
+                "description": "Allows the advisor API managed identity to call Azure OpenAI model deployments (BYOK for copilot mode)."
+              }
+            },
+            {
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
               "name": "[guid(resourceGroup().id, parameters('managedIdentityPrincipalId'), variables('monitoringMetricsPublisherRoleId'))]",
               "properties": {
                 "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('monitoringMetricsPublisherRoleId'))]",
@@ -1709,6 +2058,7 @@
       },
       "dependsOn": [
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'acr')]",
+        "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'foundry')]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'identity')]",
         "[extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'keyvault')]",
         "[subscriptionResourceId('Microsoft.Resources/resourceGroups', variables('resourceGroupName'))]",
@@ -1760,6 +2110,14 @@
     "SEARCH_ENDPOINT": {
       "type": "string",
       "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'search'), '2025-04-01').outputs.endpoint.value]"
+    },
+    "AZURE_OPENAI_ENDPOINT": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'foundry'), '2025-04-01').outputs.endpoint.value]"
+    },
+    "ADVISOR_COPILOT_MODEL": {
+      "type": "string",
+      "value": "[reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', subscription().subscriptionId, variables('resourceGroupName')), 'Microsoft.Resources/deployments', 'foundry'), '2025-04-01').outputs.deploymentName.value]"
     },
     "KEY_VAULT_ENDPOINT": {
       "type": "string",

@@ -8,11 +8,16 @@ import { InMemoryFrameworkRetrieval } from './adapters/inmemory/InMemoryFramewor
 import { MockCopilotSessionService } from './adapters/inmemory/MockCopilotSessionService.js';
 import { RealCopilotSessionService } from './adapters/inmemory/RealCopilotSessionService.js';
 import { AgentOrchestrator } from './agent/AgentOrchestrator.js';
-import type { IConversationStore, IGuidanceStore, IProjectSearchService, IFrameworkRetrievalService, ICopilotSessionService } from '@advisor/shared';
+import { DeterministicAdvisorAgent } from './agent/DeterministicAdvisorAgent.js';
+import { CopilotAdvisorAgent } from './agent/CopilotAdvisorAgent.js';
+import type { IConversationStore, IGuidanceStore, IProjectSearchService, IFrameworkRetrievalService, ICopilotSessionService, IAdvisorAgent } from '@advisor/shared';
 import { log } from './logger.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const SKILL_PATH = resolve(__dirname, '../../../../.agents/skills/microsoft-ai-decision-framework');
+// Skill path is configurable for deployment (container layout differs from the
+// repo). Falls back to the in-repo location for local dev.
+const SKILL_PATH = process.env['ADVISOR_SKILL_PATH']
+  ?? resolve(__dirname, '../../../../.agents/skills/microsoft-ai-decision-framework');
 
 export interface AppDependencies {
   conversationStore: IConversationStore;
@@ -20,6 +25,7 @@ export interface AppDependencies {
   projectSearch: IProjectSearchService;
   frameworkRetrieval: IFrameworkRetrievalService;
   copilotService: ICopilotSessionService;
+  advisorAgent: IAdvisorAgent;
   orchestrator: AgentOrchestrator;
   skillPath: string;
 }
@@ -103,7 +109,7 @@ export async function buildDependencies(): Promise<AppDependencies> {
   }
 
   // -------------------------------------------------------------------------
-  // Copilot SDK service — independent of the Azure data layer
+  // Copilot SDK transport service — independent of the Azure data layer
   // -------------------------------------------------------------------------
   let copilotService: ICopilotSessionService;
   if (mode === 'copilot') {
@@ -114,14 +120,31 @@ export async function buildDependencies(): Promise<AppDependencies> {
     copilotService = new MockCopilotSessionService(conversationStore, guidanceStore);
   }
 
+  // -------------------------------------------------------------------------
+  // Advisor "brain" — the content generator behind the IAdvisorAgent seam.
+  //   mock    → DeterministicAdvisorAgent (scripted, offline, deployed default)
+  //   copilot → CopilotAdvisorAgent (real framework-driven SDK agent)
+  // -------------------------------------------------------------------------
+  let advisorAgent: IAdvisorAgent;
+  if (mode === 'copilot') {
+    log.info({}, 'Using CopilotAdvisorAgent (framework-driven, GitHub Copilot SDK)');
+    advisorAgent = new CopilotAdvisorAgent({
+      copilotService,
+      skillPath: SKILL_PATH,
+      projectSearch,
+      frameworkRetrieval,
+    });
+  } else {
+    log.info({}, 'Using DeterministicAdvisorAgent (scripted, deterministic)');
+    advisorAgent = new DeterministicAdvisorAgent({ projectSearch, frameworkRetrieval });
+  }
+
   const orchestrator = new AgentOrchestrator({
     conversationStore,
     guidanceStore,
     projectSearch,
-    frameworkRetrieval,
-    copilotService,
-    skillPath: SKILL_PATH,
+    advisorAgent,
   });
 
-  return { conversationStore, guidanceStore, projectSearch, frameworkRetrieval, copilotService, orchestrator, skillPath: SKILL_PATH };
+  return { conversationStore, guidanceStore, projectSearch, frameworkRetrieval, copilotService, advisorAgent, orchestrator, skillPath: SKILL_PATH };
 }
