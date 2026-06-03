@@ -33,7 +33,8 @@ export function createApp(deps: AppDependencies): express.Application {
   // Global error handler
   app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
     const correlationId = (req as Request & { correlationId?: string }).correlationId ?? 'unknown';
-    log.error({ correlationId, errorCategory: 'UNHANDLED' }, String(err));
+    const stack = err instanceof Error ? err.stack : undefined;
+    log.error({ correlationId, errorCategory: 'UNHANDLED', stack }, String(err));
     res.status(500).json({
       ok: false,
       error: {

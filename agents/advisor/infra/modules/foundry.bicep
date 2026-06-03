@@ -128,6 +128,13 @@ resource privateEndpoint 'Microsoft.Network/privateEndpoints@2023-04-01' = {
   name: privateEndpointName
   location: location
   tags: tags
+  // Depend on the model deployment so the private endpoint is created only after
+  // the account has settled back to "Succeeded". Applying a deployment transiently
+  // flips the account to "Accepted", and a concurrent PE create fails with
+  // AccountProvisioningStateInvalid.
+  dependsOn: [
+    deployment
+  ]
   properties: {
     subnet: {
       id: privateEndpointSubnetId

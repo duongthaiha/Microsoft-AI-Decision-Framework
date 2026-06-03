@@ -102,14 +102,20 @@ const defaultTokenProvider: BearerTokenProvider = {
 const defaultLoader: CopilotSdkLoader = {
   async load(): Promise<LoadedSdk> {
     const sdk = await import('@github/copilot-sdk');
+    const debug = process.env['ADVISOR_COPILOT_DEBUG'] === '1';
     return {
       // In BYOK mode no GitHub token is required — the CLI is a runtime only and
       // the model is reached via the session `provider`. Only pass gitHubToken
       // when one is actually present.
-      createClient: (token?: string): SdkClientLike =>
-        new sdk.CopilotClient(
-          token ? { gitHubToken: token, useLoggedInUser: false } : { useLoggedInUser: false },
-        ) as SdkClientLike,
+      createClient: (token?: string): SdkClientLike => {
+        const base: Record<string, unknown> = token
+          ? { gitHubToken: token, useLoggedInUser: false }
+          : { useLoggedInUser: false };
+        if (debug) {
+          base['logLevel'] = 'debug';
+        }
+        return new sdk.CopilotClient(base) as SdkClientLike;
+      },
       defineTool: ((name, config) => sdk.defineTool(name, config)) as SdkDefineTool,
     };
   },
@@ -280,7 +286,22 @@ export class RealCopilotSessionService implements ICopilotSessionService {
     if (!session) {
       throw new Error(`Copilot SDK session not found: ${copilotSdkSessionId}`);
     }
-    const response = await session.sendAndWait({ prompt }, this.timeoutMs);
+    let response: { data?: { content?: string } } | undefined;
+    try {
+      response = await session.sendAndWait({ prompt }, this.timeoutMs);
+    } catch (err) {
+      log.error(
+        {
+          copilotSdkSessionId,
+          model: this.model,
+          byok: this.byok,
+          sdkError: String(err),
+          stack: err instanceof Error ? err.stack : undefined,
+        },
+        'Copilot SDK sendAndWait threw',
+      );
+      throw err;
+    }
     const content = response?.data?.content;
     if (typeof content !== 'string') {
       throw new Error('Copilot SDK returned no assistant message content.');
