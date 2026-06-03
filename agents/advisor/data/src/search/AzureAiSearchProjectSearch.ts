@@ -86,9 +86,18 @@ export class AzureAiSearchProjectSearch implements IProjectSearchService {
   /**
    * Creates or updates the project-knowledge index definition.
    * Call once during infra provisioning or seed loading.
+   *
+   * Overrides the name in the static definition with the configured indexName so
+   * that a non-default index name (e.g. 'advisor-project-knowledge' set via the
+   * SEARCH_INDEX env var) is created correctly. Without this override, ensureIndex()
+   * would create a 'project-knowledge' index while the search client queries
+   * 'advisor-project-knowledge', producing a persistent 404.
    */
   async ensureIndex(): Promise<void> {
-    await this.indexClient.createOrUpdateIndex(PROJECT_KNOWLEDGE_INDEX_DEFINITION);
+    await this.indexClient.createOrUpdateIndex({
+      ...PROJECT_KNOWLEDGE_INDEX_DEFINITION,
+      name: this.options.indexName,
+    });
   }
 
   async similarProjects(query: SimilarProjectSearchQuery): Promise<SimilarProjectResult> {

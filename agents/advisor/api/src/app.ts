@@ -27,6 +27,9 @@ export function createApp(deps: AppDependencies): express.Application {
   // Admin guidance router
   app.use('/admin/guidance', buildAdminGuidanceRouter(deps));
 
+  // Admin seed router (only active when ENABLE_ADMIN_SEED=true)
+  app.use('/admin/seed', buildAdminSeedRouter());
+
   // Global error handler
   app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
     const correlationId = (req as Request & { correlationId?: string }).correlationId ?? 'unknown';
@@ -333,6 +336,77 @@ function buildAdminGuidanceRouter(deps: AppDependencies): express.Router {
     } catch (err) {
       log.error({ correlationId, orgId, instructionSetId, errorCategory: 'GUIDANCE_ACTIVATE' }, String(err));
       res.status(500).json({ ok: false, error: { code: 'INTERNAL_ERROR', message: 'Failed to activate guidance', correlationId } });
+    }
+  });
+
+  return router;
+}
+
+/**
+ * Admin seed router — idempotent project-knowledge index creation + document upload.
+ *
+ * Only active when ENABLE_ADMIN_SEED=true is set on the container.
+ * The container is VNet-integrated and reaches AI Search via private endpoint,
+ * so this is the production-correct seeding path when public network access is disabled.
+ *
+ * POST /admin/seed/project-knowledge
+ *   → ensureIndex() + uploadDocuments() using SEARCH_ENDPOINT + SEARCH_INDEX env vars.
+ */
+function buildAdminSeedRouter(): express.Router {
+  const router = express.Router();
+
+  type ReqWithCorr = Request & { correlationId: string };
+
+  // Guard: disabled unless ENABLE_ADMIN_SEED=true
+  router.use((_req: Request, res: Response, next: NextFunction) => {
+    if (process.env['ENABLE_ADMIN_SEED'] !== 'true') {
+      res.status(403).json({
+        ok: false,
+        error: { code: 'FORBIDDEN', message: 'Admin seed endpoint is not enabled on this deployment.' },
+      });
+      return;
+    }
+    next();
+  });
+
+  router.post('/project-knowledge', async (req: Request, res: Response) => {
+    const correlationId = (req as ReqWithCorr).correlationId;
+    const searchEndpoint = process.env['SEARCH_ENDPOINT'];
+    const indexName = process.env['SEARCH_INDEX'] ?? 'advisor-project-knowledge';
+
+    if (!searchEndpoint) {
+      res.status(500).json({
+        ok: false,
+        error: { code: 'CONFIG_ERROR', message: 'SEARCH_ENDPOINT is not configured.', correlationId },
+      });
+      return;
+    }
+
+    try {
+      log.info({ correlationId, indexName, requestType: 'adminSeed' }, 'Admin seed: ensuring index and uploading documents');
+
+      // Dynamically import to keep Azure SDK out of the in-memory bundle.
+      const { AzureAiSearchProjectSearch, SEED_PROJECT_KNOWLEDGE_DOCUMENTS } =
+        await import('@advisor/data').catch(() => {
+          throw new Error('Failed to load @advisor/data. Ensure the data workspace is built.');
+        }) as typeof import('@advisor/data');
+
+      const projectSearch = new AzureAiSearchProjectSearch({ endpoint: searchEndpoint, indexName });
+
+      await projectSearch.ensureIndex();
+      log.info({ correlationId, indexName }, 'Admin seed: index ensured');
+
+      const docs = SEED_PROJECT_KNOWLEDGE_DOCUMENTS.map(AzureAiSearchProjectSearch.toSearchDocument);
+      await projectSearch.uploadDocuments(docs);
+
+      log.info({ correlationId, indexName, count: docs.length }, 'Admin seed: documents uploaded');
+      res.json({ ok: true, data: { indexName, documentsSeeded: docs.length, idempotent: true } });
+    } catch (err) {
+      log.error({ correlationId, errorCategory: 'ADMIN_SEED' }, String(err));
+      res.status(500).json({
+        ok: false,
+        error: { code: 'SEED_FAILED', message: String(err), correlationId },
+      });
     }
   });
 

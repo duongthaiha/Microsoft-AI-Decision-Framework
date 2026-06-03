@@ -33,6 +33,46 @@
 
 ---
 
+## Learnings — Session: seed `advisor-project-knowledge` index — 2026-06-03
+
+### Index name mismatch bug (CRITICAL)
+`AzureAiSearchProjectSearch.ensureIndex()` used the hardcoded `name: 'project-knowledge'` from the static `PROJECT_KNOWLEDGE_INDEX_DEFINITION`. The production container is configured with `SEARCH_INDEX=advisor-project-knowledge` (set in `main.bicep` default + `main.parameters.json`). This meant `ensureIndex()` created `project-knowledge` while the search client queried `advisor-project-knowledge`, producing a persistent Search 404. Fix: override the name in `ensureIndex()` with `this.options.indexName`.
+
+### In-network seeding path chosen: Option (a) — guarded admin endpoint inside the container
+
+Azure AI Search has `publicNetworkAccess: Disabled` + `disableLocalAuth: true` (confirmed via `az rest` against the 2023-11-01 API). The `az search service show` CLI command returned null for both fields — use `az rest` to get accurate values.
+
+The container app is VNet-integrated (outbound traffic stays private). Added `POST /admin/seed/project-knowledge` endpoint to `@advisor/api`, guarded by `ENABLE_ADMIN_SEED=true`. Workflow:
+1. `az containerapp update … --set-env-vars ENABLE_ADMIN_SEED=true`
+2. `POST /admin/seed/project-knowledge` — creates index (ensureIndex) + uploads 6 seed docs (uploadDocuments)
+3. `az containerapp update … --remove-env-vars ENABLE_ADMIN_SEED`
+
+**Why not Option (b) Container Apps Job**: container already running; admin endpoint is simpler and shares the same managed identity.  
+**Why not Option (c) public access**: Azure Policy disables it; out of scope.
+
+### Repeatable seed command
+```powershell
+cd agents/advisor/data/scripts
+./seed-via-admin-endpoint.ps1
+```
+(Requires `ENABLE_ADMIN_SEED=true` set on the container first.)
+
+### Index schema that works (`advisor-project-knowledge`)
+- Flat document shape — `similarProjectSignals` flattened to top-level string fields.
+- `searchableText` = manually crafted BM25 keyword field.
+- Semantic config `project-semantic` on title + searchableText + summary.
+- Azure AI Search Basic tier (private endpoint only) → semantic ranking not active, BM25 only. Results still return meaningful ranked scores (>0.94) for related queries.
+- `ensureIndex()` must pass `{ ...DEFINITION, name: this.options.indexName }` to `createOrUpdateIndex`.
+
+### Cosmos guidance seeding path
+`POST /admin/guidance/org-nfum` with the `CustomerGuidanceDocument` JSON body. The admin guidance router in `app.ts` calls `guidanceStore.saveGuidance()`. No extra endpoint needed — existing route handles it.
+
+### Validation confirmed (2026-06-03)
+- `GET /sessions/:id/similar-projects` returns 3 ranked matches with scores > 0.94 for an NFU Mutual insurance intake.
+- Top match: `proj-nfum-rural-claims-advisor-001` (score 0.97).
+- Guidance seeded for `org-nfum` (instructionSetId `instr-nfum-claims-001`) confirmed via session creation returning `activeInstructionSetId`.
+
+
 ## Cross-Agent Note — Dozer Deployment Validation (2026-05-29T17:44:22Z)
 
 **From:** Scribe (orchestration summary)  
