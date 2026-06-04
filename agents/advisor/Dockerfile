@@ -21,19 +21,24 @@ COPY package.json package-lock.json tsconfig.base.json ./
 COPY shared/package.json ./shared/
 COPY data/package.json ./data/
 COPY api/package.json ./api/
+COPY web/package.json ./web/
 
-# Install all workspace deps (includes devDependencies for TypeScript)
+# Install all workspace deps (includes devDependencies for TypeScript + Vite)
 RUN npm ci
 
 # Copy source for all workspaces the api depends on
 COPY shared/ ./shared/
 COPY data/ ./data/
 COPY api/ ./api/
+COPY web/ ./web/
 
 # Build shared → data → api (data has Azure SDK adapters needed at runtime)
 RUN npm run build --workspace=@advisor/shared
 RUN npm run build --workspace=@advisor/data
 RUN npm run build --workspace=@advisor/api
+# Build the web SPA. VITE_API_URL is intentionally unset so the client uses
+# relative URLs and reaches the API from the same origin it is served from.
+RUN npm run build --workspace=@advisor/web
 
 # ============================================================
 # Stage 2: Production runner
@@ -73,6 +78,9 @@ RUN npm ci --omit=dev
 COPY --from=builder /app/shared/dist ./shared/dist
 COPY --from=builder /app/data/dist ./data/dist
 COPY --from=builder /app/api/dist ./api/dist
+
+# Copy the built web SPA so the API can serve it from the same origin.
+COPY --from=builder /app/web/dist ./web/dist
 
 # The microsoft-ai-decision-framework skill is vendored into the build context
 # by the azd `prepackage` hook (see azure.yaml). The CopilotAdvisorAgent loads

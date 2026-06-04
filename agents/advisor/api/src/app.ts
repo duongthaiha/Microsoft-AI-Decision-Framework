@@ -1,6 +1,8 @@
 import cors from 'cors';
 import express, { type Request, type Response, type NextFunction } from 'express';
 import { randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import type { AppDependencies } from './composition.js';
 import { log } from './logger.js';
 import type { CustomerGuidanceDocument } from '@advisor/shared';
@@ -29,6 +31,26 @@ export function createApp(deps: AppDependencies): express.Application {
 
   // Admin seed router (only active when ENABLE_ADMIN_SEED=true)
   app.use('/admin/seed', buildAdminSeedRouter());
+
+  // ---------------------------------------------------------------------------
+  // Static web SPA
+  // ---------------------------------------------------------------------------
+  // When the built web/dist is present in the image, the API also serves the
+  // single-page app from the SAME origin. This means the browser needs no CORS
+  // and the SPA reaches the API via relative URLs (web client BASE_URL defaults
+  // to ''). If the dist is absent (e.g. local API-only dev), the API runs
+  // headless and these routes are simply not registered.
+  const webDist = process.env['ADVISOR_WEB_DIST'] ?? join(process.cwd(), 'web', 'dist');
+  if (existsSync(join(webDist, 'index.html'))) {
+    app.use(express.static(webDist));
+    // SPA fallback: any non-API GET returns index.html for client-side routing.
+    app.get(/^\/(?!sessions|admin|health).*/, (_req: Request, res: Response) => {
+      res.sendFile(join(webDist, 'index.html'));
+    });
+    log.info({ webDist }, 'Serving web SPA from API origin');
+  } else {
+    log.info({ webDist }, 'Web SPA dist not found — running API-only');
+  }
 
   // Global error handler
   app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {

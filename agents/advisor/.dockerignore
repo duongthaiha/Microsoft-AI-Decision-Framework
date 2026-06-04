@@ -24,7 +24,6 @@ dist/
 *.env.*
 
 # Dev/test-only workspaces — not needed in the API image
-web/
 cli/
 eval/
 
