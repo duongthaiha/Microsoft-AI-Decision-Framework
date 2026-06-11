@@ -1,0 +1,16 @@
+# Azure AI Evaluation SDK — built-in evaluators + the evaluate() batch runner.
+azure-ai-evaluation
+
+# Microsoft Entra auth for the judge model and (optionally) Foundry logging.
+azure-identity
+
+# OpenAI client used by the custom prompt-based graders (also a transitive
+# dependency of azure-ai-evaluation; pinned here for clarity).
+openai
+
+# Loads EVAL_* / FOUNDRY_* configuration from a local .env file.
+python-dotenv
+
+# The target reuses ../src (advisor_console + the Copilot SDK). Install the
+# console's own requirements too:
+#   pip install -r ../src/requirements.txt
