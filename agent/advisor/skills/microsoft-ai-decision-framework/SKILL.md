@@ -27,12 +27,6 @@ Do **not** use this skill for generic Copilot SDK programming questions unless t
 - The bundled constitution applies: use the Teaching Triad, avoid product supremacy, and say what a technology cannot do.
 - Product capabilities, lifecycle status, pricing, limits, and availability must be verified against official Microsoft documentation before making current technical claims.
 - Treat this skill as the navigator. Treat the bundled references as the map.
-- **Organizational context:** if an organization-context skill is also loaded
-  (for example, one named `org-context`), **load and apply it first**. Assume the
-  requester belongs to that organization, auto-answer the architecture-heavy
-  questions (data grounding, trust boundary, action safety, orchestration, team
-  skills, integration) from its standing standards instead of asking the user, and
-  follow any extra output sections it mandates (such as an "Architect Review").
 
 ## Workflow
 
@@ -188,10 +182,10 @@ template in [Decision Framework](references/DECISION_FRAMEWORK.md)):
 
 1. **Decision** - one sentence naming the recommended path.
 2. **Why this fits** - the Phase 1 (BXT) and Phase 2 (nine questions) evidence: outcome, UX, data, skills, governance, and time-to-value.
-3. **Architecture cast** - front door, orchestrator, engine, grounding, actions, governance.
-4. **What not to use** - at least one tempting but wrong-fit option and why.
+3. **Architecture cast** - One of the approved patterns if not then architecture: front door, orchestrator, engine, grounding, actions, governance.
+4. **Alternative** - Alternative recommendation if the key constraint changes (e.g., "if time to market is not critical, consider...").
 5. **Risks and guardrails** - preview/GA status, action safety, compliance, cost, evaluation needs.
-6. **Next validation step** - the smallest proof needed before build commitment.
+
 
 For fuzzy requests, output:
 
