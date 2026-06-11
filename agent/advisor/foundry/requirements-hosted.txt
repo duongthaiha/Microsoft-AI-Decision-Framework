@@ -1,0 +1,15 @@
+# Foundry hosted agent runtime dependencies (pinned for reproducible images).
+
+# Foundry Responses protocol library — exposes /responses and /readiness on 8088.
+azure-ai-agentserver-responses==1.0.0b7
+
+# GitHub Copilot SDK (imported as `from copilot import ...`). Pinned to 0.2.3,
+# which exports SubprocessConfig and matches advisor_console.py's create_session
+# usage. The SDK bundles the Copilot CLI, which requires Node.js 22.5+ (node:sqlite).
+github-copilot-sdk[telemetry]==0.2.3
+
+# Loads configuration from environment (and optional .env) for advisor_console.
+python-dotenv
+
+# Entra ID auth via DefaultAzureCredential — the hosted agent identity token.
+azure-identity

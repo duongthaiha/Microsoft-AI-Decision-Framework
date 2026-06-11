@@ -101,19 +101,22 @@ You: Which Microsoft AI platform should we use for a governed claims assistant?
 Advisor: ...
 ```
 
-## Foundry Code-First Agent Deployment
+## Foundry Hosted Agent Deployment
 
-This advisor can run as a **code-first agent** in Azure AI Foundry. The infrastructure, deployment guide, and prerequisites are documented in:
+This advisor can run as a **Foundry hosted agent** — a container that Azure AI
+Foundry Agent Service pulls and runs, exposing the Foundry Responses protocol
+while running this same Copilot SDK advisor inside. Full guide:
 
-**`./foundry/README.md`**
+**`../foundry/README.md`**
 
 In brief:
 
-1. Configure `foundry/main.parameters.json` with your Foundry endpoint and auth mode
-2. Deploy infrastructure: `az deployment sub create --template-file foundry/main.bicep --parameters @foundry/main.parameters.json`
-3. Package and deploy the agent runtime to Foundry (via Portal or SDK)
+1. Build a single-arch image: `docker buildx build --platform linux/amd64 --provenance=false --sbom=false -t <acr>.azurecr.io/advisor-hosted:<tag> -f ../Dockerfile --push ..`
+2. Grant the Foundry **project** identity `AcrPull` on the ACR.
+3. Create the hosted agent version: `python ../foundry/deploy_hosted_agent.py`
+4. Invoke: `python ../foundry/invoke_hosted_agent.py "<question>"`
 
-The agent uses the same Copilot SDK stack as the console; skills are bundled in the deployment package.
+The container entrypoint is `foundry_hosted_agent.py`; skills are baked into the image.
 
 ## Debugging in VS Code
 
