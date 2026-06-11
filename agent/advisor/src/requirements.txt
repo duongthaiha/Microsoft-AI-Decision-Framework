@@ -1,0 +1,8 @@
+# GitHub Copilot SDK for Python (imported as `from copilot import ...`)
+github-copilot-sdk
+
+# Loads configuration (Foundry endpoint/key) from a local .env file
+python-dotenv
+
+# Entra ID (Microsoft Entra) auth via DefaultAzureCredential for key-disabled Foundry
+azure-identity
