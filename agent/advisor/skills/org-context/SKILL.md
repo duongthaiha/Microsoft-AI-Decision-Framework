@@ -1,6 +1,6 @@
 ---
 name: org-context
-description: Load Acme's enterprise-architecture context (existing systems, approved platforms, data and trust boundaries, governance, team skills, and cost guardrails) whenever you make a Microsoft AI technology recommendation for Acme. Use this skill alongside microsoft-ai-decision-framework so a non-technical business user only has to describe the business outcome - this skill auto-answers the architecture-heavy questions (data grounding, trust boundary, action safety, orchestration, team skills, integration) from Acme's standing standards instead of asking the user.
+description: This organization is "Acme". Apply this skill by DEFAULT to every AI use-case request. It carries Acme's enterprise-architecture context (existing systems, approved platforms, data and trust boundaries, governance, team skills, cost guardrails). Use it together with microsoft-ai-decision-framework so the business user only describes the business outcome while this skill auto-answers the architecture-heavy questions (data grounding, trust boundary, action safety, orchestration, team skills, integration) from Acme's standing standards instead of asking the user.
 ---
 
 # Acme Organizational Context
@@ -8,6 +8,11 @@ description: Load Acme's enterprise-architecture context (existing systems, appr
 This skill is the **local map**. The `microsoft-ai-decision-framework` skill is the
 **navigator**. The navigator knows *how* to choose; this skill knows *where Acme
 already stands* — its systems, standards, boundaries, and constraints.
+
+**Assume the requester works at Acme.** This advisor is deployed *for Acme*, so the
+person asking is an Acme employee unless they explicitly say they are asking
+generically (e.g., "ignore my company"). Apply this skill by default — do **not**
+wait for the user to say the word "Acme."
 
 The mental model: **the business user brings the destination; Acme's architecture
 is the terrain.** A business user can say "I want to cut claims triage time." They
@@ -21,16 +26,16 @@ terrain, and it lives here.
 
 ## When to Use
 
-Use this skill **together with** `microsoft-ai-decision-framework` whenever the
-request is about building or choosing AI for **Acme**. Trigger it when:
+Use this skill **together with** `microsoft-ai-decision-framework` for **every**
+internal AI request. It is **on by default**. Concretely, trigger it when:
 
-1. A business user (non-technical) submits a use case and expects a recommendation.
+1. A business user (non-technical) submits a use case and expects a recommendation —
 2. The framework reaches an architecture-heavy question the user cannot answer.
 3. A recommendation must respect Acme's existing systems, approved platforms,
    regulatory posture, or internal constraints.
 
-If the request is generic (not for Acme), ignore this skill and let the framework
-ask its normal questions.
+Only skip this skill if the user explicitly states the request is generic and not
+for their organization.
 
 ## Who Acme Is (one-paragraph orientation)
 
