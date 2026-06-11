@@ -331,6 +331,39 @@ def load_config() -> AdvisorConfig:
     )
 
 
+def make_system_message(skill_dirs: list[Path]) -> dict:
+    """Build an append-mode system message that makes skill use deterministic.
+
+    Model-driven skill selection is unreliable: the agent may answer from general
+    knowledge instead of opening the loaded skills. This appended instruction tells
+    the agent to always apply the decision-framework methodology and, when an
+    ``org-context`` skill is present, to treat the user as that organization's
+    employee and auto-answer the architecture-heavy questions from its standards.
+    """
+    skill_names = {d.name for d in skill_dirs}
+    lines = [
+        "You are this organization's Microsoft AI technology advisor.",
+        "For every request you MUST ground your answer in the locally provided "
+        "skills rather than answering from general knowledge alone:",
+    ]
+    if "microsoft-ai-decision-framework" in skill_names:
+        lines.append(
+            "- Always apply the `microsoft-ai-decision-framework` skill and its "
+            "three-phase methodology (Gate -> BXT -> Nine Questions -> Selection)."
+        )
+    if "org-context" in skill_names:
+        lines.append(
+            "- Always apply the `org-context` skill. Assume the user is an employee "
+            "of that organization even if they do not name it. Auto-answer the "
+            "architecture-heavy questions (data grounding, trust boundary, action "
+            "safety, orchestration, team skills, integration) from the "
+            "organization's standing standards instead of asking the user, label "
+            "org-derived answers, and include the 'Architect Review' section it "
+            "requires in your output."
+        )
+    return {"mode": "append", "content": "\n".join(lines)}
+
+
 def make_event_handler() -> "callable":
     """Build a session event handler that prints assistant output and tool activity."""
 
@@ -418,6 +451,7 @@ async def run() -> int:
             model=config.model,
             provider=provider,
             skill_directories=[str(d) for d in config.skill_dirs],
+            system_message=make_system_message(config.skill_dirs),
             on_event=make_event_handler(),
         )
 
