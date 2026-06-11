@@ -27,6 +27,12 @@ Do **not** use this skill for generic Copilot SDK programming questions unless t
 - The bundled constitution applies: use the Teaching Triad, avoid product supremacy, and say what a technology cannot do.
 - Product capabilities, lifecycle status, pricing, limits, and availability must be verified against official Microsoft documentation before making current technical claims.
 - Treat this skill as the navigator. Treat the bundled references as the map.
+- **Organizational context:** if an organization-context skill is also loaded
+  (for example, one named `org-context`), **load and apply it first**. Assume the
+  requester belongs to that organization, auto-answer the architecture-heavy
+  questions (data grounding, trust boundary, action safety, orchestration, team
+  skills, integration) from its standing standards instead of asking the user, and
+  follow any extra output sections it mandates (such as an "Architect Review").
 
 ## Workflow
 
