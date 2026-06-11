@@ -3,8 +3,12 @@
 An interactive terminal agent built on the **GitHub Copilot SDK** (Python). It uses
 **BYOK** (bring your own key) to talk directly to an **Azure AI Foundry** endpoint —
 no GitHub Copilot subscription or token is needed for the model — and loads the local
-[`microsoft-ai-decision-framework`](../skills/microsoft-ai-decision-framework) skill so
-the agent behaves like a disciplined Microsoft AI architect.
+skills under [`../skills/`](../skills) so the agent behaves like a disciplined
+Microsoft AI architect. Every folder there with a `SKILL.md` is loaded:
+[`microsoft-ai-decision-framework`](../skills/microsoft-ai-decision-framework) (the
+decision methodology, required) and [`org-context`](../skills/org-context) (an
+organization's enterprise-architecture constraints, so a business user can describe a
+use case and have the architecture-heavy questions auto-answered).
 
 It supports two auth modes: an **API key**, or **Microsoft Entra ID** via
 `DefaultAzureCredential` (for resources that have key auth disabled).
@@ -152,7 +156,9 @@ To explicitly disable telemetry even when keys are present, set `ADVISOR_OTEL_EN
     With `openai`: `{ "type": "openai", "base_url": <.../openai/v1/>, "wire_api": <wire_api>, ... }`.
     Auth is either `api_key` (`FOUNDRY_AUTH_MODE=key`) or `bearer_token`
     (`FOUNDRY_AUTH_MODE=entra`, acquired via `DefaultAzureCredential`).
-  - `skill_directories=[<.../skills/microsoft-ai-decision-framework>]` to load the skill.
+  - `skill_directories=[...]` to load every skill folder under `../skills` that has a
+    `SKILL.md` (the framework skill is required and listed first; `org-context` and any
+    future skills are auto-discovered — no code change needed to add one).
   - `on_permission_request=PermissionHandler.approve_all` so the agent can run its tools.
 - Each turn uses `session.send_and_wait(...)`, which blocks until the session goes idle;
   an `on_event` handler streams assistant messages and tool activity to the console.
@@ -165,6 +171,6 @@ To explicitly disable telemetry even when keys are present, set `ADVISOR_OTEL_EN
 | `Configuration error: Missing required environment variable(s)` | `.env` not filled in | Set `FOUNDRY_ENDPOINT` (and `FOUNDRY_API_KEY` for key mode). |
 | `Failed to acquire an Entra token` | Not signed in | Run `az login` (or configure another `DefaultAzureCredential` source). |
 | `HTTP 401/403` from the model | Identity lacks data-plane access | Grant your identity **Cognitive Services OpenAI User** on the resource. |
-| `Skill directory not found` | Run from the wrong place / skill moved | Keep `advisor_console.py` in `agent/advisor/src` alongside `../skills/`. |
+| `Required skill not found` / `Skills directory not found` | Run from the wrong place / skill moved | Keep `advisor_console.py` in `agent/advisor/src` alongside `../skills/` (which must contain `microsoft-ai-decision-framework`). |
 | Timeouts | Slow/unreachable endpoint | Verify endpoint, model, and network access to Foundry. |
 | Authentication errors (key mode) | Wrong key or endpoint | Confirm the key and that the endpoint resolves correctly. |

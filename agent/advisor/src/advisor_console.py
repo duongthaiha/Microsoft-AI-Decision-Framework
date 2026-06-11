@@ -40,7 +40,9 @@ from copilot.session import PermissionHandler, SessionEvent
 
 from auth import COGNITIVE_SERVICES_SCOPE, get_access_token
 
-# Name of the bundled skill folder, located one level up at ../skills/<name>.
+# Required bundled skill folder, located one level up at ../skills/<name>. Any
+# other folder under ../skills that contains a SKILL.md is also loaded, so adding
+# an org-context skill needs no code change.
 SKILL_NAME = "microsoft-ai-decision-framework"
 
 # Defaults for the optional OpenTelemetry / Langfuse integration.
@@ -72,7 +74,7 @@ class AdvisorConfig:
         model: str,
         wire_api: str,
         api_version: str,
-        skill_dir: Path,
+        skill_dirs: list[Path],
         telemetry_enabled: bool = False,
         otlp_endpoint: str | None = None,
         otlp_headers: str | None = None,
@@ -87,7 +89,7 @@ class AdvisorConfig:
         self.model = model
         self.wire_api = wire_api
         self.api_version = api_version
-        self.skill_dir = skill_dir
+        self.skill_dirs = skill_dirs
         self.telemetry_enabled = telemetry_enabled
         self.otlp_endpoint = otlp_endpoint
         self.otlp_headers = otlp_headers
@@ -232,6 +234,32 @@ def _normalize_endpoint(raw: str, provider_type: str) -> str:
     return f"{base}/"
 
 
+def _discover_skill_dirs() -> list[Path]:
+    """Find every loadable skill under ../skills (any folder with a SKILL.md).
+
+    The required framework skill (``SKILL_NAME``) must be present and is listed
+    first; any additional skill folders (e.g. ``org-context``) follow in sorted
+    order. This lets new skills be added by dropping a folder under ``../skills``
+    with no code change.
+    """
+    skills_root = Path(__file__).resolve().parent.parent / "skills"
+    if not skills_root.is_dir():
+        raise ConfigError(f"Skills directory not found: {skills_root}")
+
+    required = skills_root / SKILL_NAME
+    if not (required / "SKILL.md").is_file():
+        raise ConfigError(f"Required skill not found: {required}")
+
+    extras = sorted(
+        child
+        for child in skills_root.iterdir()
+        if child.is_dir()
+        and child.name != SKILL_NAME
+        and (child / "SKILL.md").is_file()
+    )
+    return [required, *extras]
+
+
 def load_config() -> AdvisorConfig:
     """Read and validate configuration from the environment."""
     if load_dotenv is not None:
@@ -281,9 +309,7 @@ def load_config() -> AdvisorConfig:
             f"FOUNDRY_WIRE_API must be 'responses' or 'completions', got: {wire_api!r}"
         )
 
-    skill_dir = Path(__file__).resolve().parent.parent / "skills" / SKILL_NAME
-    if not skill_dir.is_dir():
-        raise ConfigError(f"Skill directory not found: {skill_dir}")
+    skill_dirs = _discover_skill_dirs()
 
     telemetry = _resolve_telemetry()
 
@@ -296,7 +322,7 @@ def load_config() -> AdvisorConfig:
         model=model,
         wire_api=wire_api,
         api_version=api_version,
-        skill_dir=skill_dir,
+        skill_dirs=skill_dirs,
         telemetry_enabled=telemetry["enabled"],
         otlp_endpoint=telemetry["otlp_endpoint"],
         otlp_headers=telemetry["otlp_headers"],
@@ -359,7 +385,7 @@ async def run() -> int:
     print(f"  Provider: {config.provider_type}")
     print(f"  Model:    {config.model}")
     print(f"  Endpoint: {config.endpoint}")
-    print(f"  Skill:    {config.skill_dir.name}")
+    print(f"  Skills:   {', '.join(d.name for d in config.skill_dirs)}")
     if config.auth_mode == "entra":
         print("  Note:     Entra token is static for this session; restart if it expires.")
     if config.telemetry_enabled:
@@ -391,7 +417,7 @@ async def run() -> int:
             on_permission_request=PermissionHandler.approve_all,
             model=config.model,
             provider=provider,
-            skill_directories=[str(config.skill_dir)],
+            skill_directories=[str(d) for d in config.skill_dirs],
             on_event=make_event_handler(),
         )
 
