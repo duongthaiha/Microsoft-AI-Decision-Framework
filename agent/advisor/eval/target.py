@@ -36,7 +36,11 @@ async def _run_once(query: str) -> str:
 
     bearer = None
     if config.auth_mode == "entra":
-        bearer = get_access_token(config.token_scope).token
+        # For batch evaluation, many parallel workers can contend on Azure CLI token
+        # acquisition. Allow a pre-acquired token to be injected once via env.
+        bearer = os.environ.get("ADVISOR_EVAL_BEARER_TOKEN", "").strip() or None
+        if not bearer:
+            bearer = get_access_token(config.token_scope).token
     provider = config.provider(bearer_token=bearer)
 
     captured: list[str] = []
@@ -77,13 +81,13 @@ async def _run_once(query: str) -> str:
 class AdvisorTarget:
     """Callable target for ``evaluate(target=AdvisorTarget())``."""
 
-    def __call__(self, *, query: str, **_: object) -> dict:
+    def __call__(self, *, query: str) -> dict:
         response = asyncio.run(_run_once(query))
         return {"response": response}
 
 
 # A module-level callable also works as a target.
-def advisor_target(*, query: str, **_: object) -> dict:
+def advisor_target(*, query: str) -> dict:
     return AdvisorTarget()(query=query)
 
 

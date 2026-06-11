@@ -20,9 +20,6 @@ cannot say "use a private endpoint into the UK South landing zone with
 human-in-the-loop on customer-facing actions." That second sentence is Acme's
 terrain, and it lives here.
 
-> **Fictional org notice.** "Acme" is an anonymized, illustrative organization. Its
-> profile is realistic but invented for decision-framework demonstrations. Verify
-> any real claim against Acme's actual architecture board before building.
 
 ## When to Use
 
@@ -50,6 +47,29 @@ II, Consumer Duty, UK GDPR). It runs a **Microsoft-aligned estate** on Azure, wi
 | [ORG_PROFILE.md](references/ORG_PROFILE.md) | Who Acme is: sector, scale, customers, regulators, strategy, risk appetite, AI posture. |
 | [SYSTEMS_INVENTORY.md](references/SYSTEMS_INVENTORY.md) | The existing estate: approved platforms, systems to integrate, identity, networking, build-style split. |
 | [GOVERNANCE_DATA.md](references/GOVERNANCE_DATA.md) | Data classification, residency, Responsible AI governance, action-safety policy, cost guardrails, approvals. |
+| [approved-patterns](references/approved-patterns/README.md) | Acme-approved AI delivery patterns (Pattern 0-3) with use-case fit, business classification, data classification, and architecture diagrams. |
+
+## Approved AI Patterns (Acme)
+
+Use the approved patterns as the default delivery map. Before naming products,
+map the request to one of these patterns and explain why.
+
+1. **Pattern 0 - M365 Copilot baseline**  
+   [pattern-0-m365-copilot.md](references/approved-patterns/pattern-0-m365-copilot.md)
+2. **Pattern 1 - Agent Builder in M365 Copilot**  
+   [pattern-1-agent-builder.md](references/approved-patterns/pattern-1-agent-builder.md)
+3. **Pattern 2 - Azure AI Foundry engineered agent**  
+   [pattern-2-azure-ai-foundry.md](references/approved-patterns/pattern-2-azure-ai-foundry.md)
+4. **Pattern 3 - Copilot Studio orchestrated agent**  
+   [pattern-3-copilot-studio.md](references/approved-patterns/pattern-3-copilot-studio.md)
+
+Pattern selection rule:
+- Default to the **simplest approved pattern** that satisfies the business
+  outcome and risk posture.
+- Escalate from 0 -> 1 -> 3 -> 2 as integration complexity, model control, and
+  governance requirements increase.
+- If none fit cleanly, recommend the nearest pattern and put the gap in
+  **Architect Review** as an approval item.
 
 ## Business-User Intake Mode
 
@@ -135,6 +155,7 @@ After a recommendation, silently check:
 4. Did the recommendation respect Acme's data boundary, action-safety, and approved
    platforms?
 5. Did I append the Architect Review section?
+6. Did I explicitly map the recommendation to one Acme approved pattern?
 
 If any answer is wrong, correct the output (and suggest a targeted update to this
 skill's references if a standing answer is missing).

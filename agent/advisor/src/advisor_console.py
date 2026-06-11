@@ -342,14 +342,14 @@ def make_system_message(skill_dirs: list[Path]) -> dict:
     """
     skill_names = {d.name for d in skill_dirs}
     lines = [
-        "You are this organization's Microsoft AI technology advisor.",
+        "You are this organization's AI technology advisor.",
         "For every request you MUST ground your answer in the locally provided "
         "skills rather than answering from general knowledge alone:",
     ]
     if "microsoft-ai-decision-framework" in skill_names:
         lines.append(
-            "- Always apply the `microsoft-ai-decision-framework` skill and its "
-            "three-phase methodology (Gate -> BXT -> Nine Questions -> Selection)."
+            "- Always apply the `microsoft-ai-decision-framework` skill for guidance on Microsoft AI Technology decisions. "
+            "Follow its structured methodology, use the bundled references, and label your output sections according to its requirements.   "
         )
     if "org-context" in skill_names:
         lines.append(
@@ -357,7 +357,7 @@ def make_system_message(skill_dirs: list[Path]) -> dict:
             "of that organization even if they do not name it. Auto-answer the "
             "architecture-heavy questions (data grounding, trust boundary, action "
             "safety, orchestration, team skills, integration) from the "
-            "organization's standing standards instead of asking the user, label "
+            "organization's standing standards avaible in the skill, label "
             "org-derived answers, and include the 'Architect Review' section it "
             "requires in your output."
         )
