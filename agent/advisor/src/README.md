@@ -42,6 +42,12 @@ Set via environment variables or a local `.env` file (loaded automatically).
 | `ADVISOR_MODEL`        | No       | `gpt-4o`     | Deployment / model name in your Foundry resource. |
 | `FOUNDRY_API_VERSION`  | No       | `2024-10-21` | Azure API version (used when `FOUNDRY_PROVIDER_TYPE=azure`). |
 | `FOUNDRY_WIRE_API`     | No       | `responses`  | `responses` or `completions` (used when `FOUNDRY_PROVIDER_TYPE=openai`). |
+| `LANGFUSE_PUBLIC_KEY`  | No       | —            | Langfuse public key. Setting this **and** `LANGFUSE_SECRET_KEY` enables OpenTelemetry tracing. |
+| `LANGFUSE_SECRET_KEY`  | No       | —            | Langfuse secret key. |
+| `LANGFUSE_HOST`        | No       | `http://localhost:3000` | Base URL of your Langfuse instance (`LANGFUSE_BASE_URL` is also accepted). OTLP endpoint is derived as `<host>/api/public/otel`. |
+| `ADVISOR_OTEL_ENABLED` | No       | auto         | Explicit `true`/`false` override. Default: on when both Langfuse keys are present. |
+| `ADVISOR_OTEL_CAPTURE_CONTENT` | No | `true`     | Whether prompt/response content is included in traces. |
+| `ADVISOR_OTEL_SERVICE_NAME`    | No | `advisor-console` | Instrumentation / service name shown in Langfuse. |
 
 > `.env` holds secrets and is ignored by git (`*.env`). Only `.env.example` is committed.
 
@@ -104,6 +110,38 @@ Advisor: ...
 Each loads `agent/advisor/src/.env` via `envFile` and sets the working directory to
 `agent/advisor/src` so the skill path and `.env` resolve. Pick a configuration in the
 Run and Debug panel and press F5.
+
+## Observability (optional): OpenTelemetry → Langfuse
+
+The console can export **OpenTelemetry** traces (turns, tool calls, and LLM usage emitted by
+the Copilot CLI) to a [Langfuse](https://langfuse.com/) instance. This is **off by default**
+and fully optional — without Langfuse keys, nothing changes.
+
+**Enable it** by setting both Langfuse keys (telemetry auto-enables when they are present):
+
+```powershell
+# in .env (next to advisor_console.py)
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_HOST=http://localhost:3000   # default; your local Langfuse base URL
+```
+
+How it works:
+
+- The SDK's `TelemetryConfig` (`SubprocessConfig(telemetry=...)`) points the Copilot CLI at the
+  Langfuse OTLP endpoint, derived as `<LANGFUSE_HOST>/api/public/otel` (the exporter appends
+  `/v1/traces`).
+- Langfuse requires HTTP **Basic Auth**, which the SDK's `TelemetryConfig` does not expose. The
+  console therefore sets the standard `OTEL_EXPORTER_OTLP_HEADERS` env var
+  (`Authorization=Basic base64(public:secret)`) — the CLI subprocess inherits it. It also pins
+  `OTEL_EXPORTER_OTLP_PROTOCOL=http/protobuf`, since Langfuse only accepts OTLP over HTTP (no gRPC).
+- On startup the console prints a `Telemetry: OpenTelemetry → <endpoint>` line when enabled.
+
+> **Privacy:** `ADVISOR_OTEL_CAPTURE_CONTENT` defaults to `true`, so prompt/response content is
+> sent to Langfuse. Set it to `false` for shared or remote Langfuse instances where message
+> content should not leave the machine.
+
+To explicitly disable telemetry even when keys are present, set `ADVISOR_OTEL_ENABLED=false`.
 
 ## How it works
 

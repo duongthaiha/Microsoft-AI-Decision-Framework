@@ -24,6 +24,7 @@ Run:
 from __future__ import annotations
 
 import asyncio
+import base64
 import os
 import sys
 from pathlib import Path
@@ -34,13 +35,17 @@ try:
 except ImportError:  # python-dotenv is optional at runtime
     load_dotenv = None
 
-from copilot import CopilotClient
+from copilot import CopilotClient, SubprocessConfig
 from copilot.session import PermissionHandler, SessionEvent
 
 from auth import COGNITIVE_SERVICES_SCOPE, get_access_token
 
 # Name of the bundled skill folder, located one level up at ../skills/<name>.
 SKILL_NAME = "microsoft-ai-decision-framework"
+
+# Defaults for the optional OpenTelemetry / Langfuse integration.
+DEFAULT_LANGFUSE_HOST = "http://localhost:3000"
+DEFAULT_OTEL_SERVICE_NAME = "advisor-console"
 
 # How long (seconds) to wait for the agent to finish a single turn. Generous,
 # because framework reasoning over the bundled references can take a while.
@@ -68,6 +73,11 @@ class AdvisorConfig:
         wire_api: str,
         api_version: str,
         skill_dir: Path,
+        telemetry_enabled: bool = False,
+        otlp_endpoint: str | None = None,
+        otlp_headers: str | None = None,
+        otel_capture_content: bool = True,
+        otel_service_name: str = DEFAULT_OTEL_SERVICE_NAME,
     ) -> None:
         self.auth_mode = auth_mode
         self.provider_type = provider_type
@@ -78,6 +88,11 @@ class AdvisorConfig:
         self.wire_api = wire_api
         self.api_version = api_version
         self.skill_dir = skill_dir
+        self.telemetry_enabled = telemetry_enabled
+        self.otlp_endpoint = otlp_endpoint
+        self.otlp_headers = otlp_headers
+        self.otel_capture_content = otel_capture_content
+        self.otel_service_name = otel_service_name
 
     def responses_url(self) -> str:
         """Full URL of the OpenAI-compatible Responses API for this endpoint.
@@ -120,6 +135,75 @@ class AdvisorConfig:
             "wire_api": self.wire_api,
             **credential,
         }
+
+
+def _parse_bool(raw: str | None, default: bool) -> bool:
+    """Parse a truthy/falsy environment string, falling back to ``default``."""
+    if raw is None:
+        return default
+    value = raw.strip().lower()
+    if value in ("1", "true", "yes", "on"):
+        return True
+    if value in ("0", "false", "no", "off"):
+        return False
+    return default
+
+
+def _resolve_telemetry() -> dict:
+    """Resolve the optional OpenTelemetry / Langfuse configuration from the env.
+
+    Telemetry is **opt-in**: it is enabled only when both ``LANGFUSE_PUBLIC_KEY``
+    and ``LANGFUSE_SECRET_KEY`` are present (unless ``ADVISOR_OTEL_ENABLED`` is
+    explicitly set to a falsy value). When disabled, the console behaves exactly
+    as before.
+
+    Returns a dict with keys: ``enabled``, ``otlp_endpoint``, ``otlp_headers``,
+    ``capture_content``, ``service_name``. ``otlp_endpoint``/``otlp_headers`` are
+    ``None`` when disabled.
+    """
+    public_key = os.environ.get("LANGFUSE_PUBLIC_KEY", "").strip()
+    secret_key = os.environ.get("LANGFUSE_SECRET_KEY", "").strip()
+    host = (
+        os.environ.get("LANGFUSE_HOST", "").strip()
+        or os.environ.get("LANGFUSE_BASE_URL", "").strip()
+        or DEFAULT_LANGFUSE_HOST
+    ).strip("\"'").rstrip("/")
+    capture_content = _parse_bool(os.environ.get("ADVISOR_OTEL_CAPTURE_CONTENT"), True)
+    service_name = (
+        os.environ.get("ADVISOR_OTEL_SERVICE_NAME", "").strip() or DEFAULT_OTEL_SERVICE_NAME
+    )
+
+    have_keys = bool(public_key and secret_key)
+    # Auto-enable when keys are present; honor an explicit override either way.
+    enabled = _parse_bool(os.environ.get("ADVISOR_OTEL_ENABLED"), have_keys)
+
+    if not enabled:
+        return {
+            "enabled": False,
+            "otlp_endpoint": None,
+            "otlp_headers": None,
+            "capture_content": capture_content,
+            "service_name": service_name,
+        }
+
+    if not have_keys:
+        raise ConfigError(
+            "OpenTelemetry is enabled but Langfuse credentials are missing. Set both "
+            "LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY (or unset ADVISOR_OTEL_ENABLED)."
+        )
+
+    # Langfuse receives OTLP on <host>/api/public/otel; the exporter appends /v1/traces.
+    otlp_endpoint = f"{host}/api/public/otel"
+    auth = base64.b64encode(f"{public_key}:{secret_key}".encode()).decode()
+    otlp_headers = f"Authorization=Basic {auth}"
+
+    return {
+        "enabled": True,
+        "otlp_endpoint": otlp_endpoint,
+        "otlp_headers": otlp_headers,
+        "capture_content": capture_content,
+        "service_name": service_name,
+    }
 
 
 def _normalize_endpoint(raw: str, provider_type: str) -> str:
@@ -201,6 +285,8 @@ def load_config() -> AdvisorConfig:
     if not skill_dir.is_dir():
         raise ConfigError(f"Skill directory not found: {skill_dir}")
 
+    telemetry = _resolve_telemetry()
+
     return AdvisorConfig(
         auth_mode=auth_mode,
         provider_type=provider_type,
@@ -211,6 +297,11 @@ def load_config() -> AdvisorConfig:
         wire_api=wire_api,
         api_version=api_version,
         skill_dir=skill_dir,
+        telemetry_enabled=telemetry["enabled"],
+        otlp_endpoint=telemetry["otlp_endpoint"],
+        otlp_headers=telemetry["otlp_headers"],
+        otel_capture_content=telemetry["capture_content"],
+        otel_service_name=telemetry["service_name"],
     )
 
 
@@ -225,7 +316,7 @@ def make_event_handler() -> "callable":
                 print(f"\nAdvisor: {content}\n")
         elif event_type == "tool.execution_start":
             tool_name = getattr(event.data, "tool_name", "tool")
-            print(f"  → {tool_name}")
+            print(f"  -> {tool_name}")
         elif event_type == "session.error":
             message = getattr(event.data, "message", str(event.data))
             print(f"\n[session error] {message}\n", file=sys.stderr)
@@ -271,9 +362,28 @@ async def run() -> int:
     print(f"  Skill:    {config.skill_dir.name}")
     if config.auth_mode == "entra":
         print("  Note:     Entra token is static for this session; restart if it expires.")
+    if config.telemetry_enabled:
+        print(f"  Telemetry: OpenTelemetry -> {config.otlp_endpoint}")
     print("Type your question. Use /exit (or /quit) to leave.\n")
 
-    client = CopilotClient()
+    subprocess_config = None
+    if config.telemetry_enabled:
+        # The CLI subprocess inherits os.environ; the SDK's TelemetryConfig has no
+        # headers field, so Langfuse Basic Auth is supplied via the standard
+        # OTEL_EXPORTER_OTLP_HEADERS env var. Langfuse only accepts OTLP over HTTP.
+        if config.otlp_headers:
+            os.environ["OTEL_EXPORTER_OTLP_HEADERS"] = config.otlp_headers
+        os.environ.setdefault("OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf")
+        subprocess_config = SubprocessConfig(
+            telemetry={
+                "otlp_endpoint": config.otlp_endpoint,
+                "exporter_type": "otlp-http",
+                "source_name": config.otel_service_name,
+                "capture_content": config.otel_capture_content,
+            }
+        )
+
+    client = CopilotClient(subprocess_config)
     session = None
     try:
         await client.start()

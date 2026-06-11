@@ -1,5 +1,7 @@
 # GitHub Copilot SDK for Python (imported as `from copilot import ...`)
-github-copilot-sdk
+# The [telemetry] extra adds opentelemetry-api, used for the optional Langfuse /
+# OpenTelemetry integration (trace-context helpers).
+github-copilot-sdk[telemetry]
 
 # Loads configuration (Foundry endpoint/key) from a local .env file
 python-dotenv
