@@ -1,0 +1,48 @@
+{
+  // Debug configurations for the Advisor Console (agent/advisor/src).
+  // Uses the Python debugger (debugpy). The console is an interactive REPL, so
+  // "integratedTerminal" is required for stdin to work.
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Advisor Console",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/agent/advisor/src/advisor_console.py",
+      "cwd": "${workspaceFolder}/agent/advisor/src",
+      "console": "integratedTerminal",
+      "envFile": "${workspaceFolder}/agent/advisor/src/.env",
+      "justMyCode": true
+    },
+    {
+      "name": "Validate Foundry Token",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/agent/advisor/src/validate_token.py",
+      "cwd": "${workspaceFolder}/agent/advisor/src",
+      "console": "integratedTerminal",
+      "envFile": "${workspaceFolder}/agent/advisor/src/.env",
+      "args": [],
+      "justMyCode": true
+    },
+    {
+      "name": "Validate Foundry Token (custom prompt)",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/agent/advisor/src/validate_token.py",
+      "cwd": "${workspaceFolder}/agent/advisor/src",
+      "console": "integratedTerminal",
+      "envFile": "${workspaceFolder}/agent/advisor/src/.env",
+      "args": ["${input:validatePrompt}"],
+      "justMyCode": true
+    }
+  ],
+  "inputs": [
+    {
+      "id": "validatePrompt",
+      "type": "promptString",
+      "description": "Prompt to send to the Foundry model",
+      "default": "What is 2+2? Answer in one short sentence."
+    }
+  ]
+}
