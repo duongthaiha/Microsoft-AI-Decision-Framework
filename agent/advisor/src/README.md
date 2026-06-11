@@ -101,6 +101,20 @@ You: Which Microsoft AI platform should we use for a governed claims assistant?
 Advisor: ...
 ```
 
+## Foundry Code-First Agent Deployment
+
+This advisor can run as a **code-first agent** in Azure AI Foundry. The infrastructure, deployment guide, and prerequisites are documented in:
+
+**`./foundry/README.md`**
+
+In brief:
+
+1. Configure `foundry/main.parameters.json` with your Foundry endpoint and auth mode
+2. Deploy infrastructure: `az deployment sub create --template-file foundry/main.bicep --parameters @foundry/main.parameters.json`
+3. Package and deploy the agent runtime to Foundry (via Portal or SDK)
+
+The agent uses the same Copilot SDK stack as the console; skills are bundled in the deployment package.
+
 ## Debugging in VS Code
 
 `.vscode/launch.json` (at the repo root) includes ready-made configurations
